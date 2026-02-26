@@ -1,0 +1,62 @@
+{
+  "2026.2.25": {
+    "fullVersion": "2026.2.25",
+    "version": {
+      "major": 2026,
+      "minor": 2,
+      "patch": 25,
+      "pre": null,
+      "build": null
+    },
+    "debianDefault": "trixie",
+    "alpineDefault": "alpine3.23",
+    "variants": {
+      "trixie": [
+        "amd64",
+        "arm64v8"
+      ],
+      "bookworm": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.23": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.22": [
+        "amd64",
+        "arm64v8"
+      ]
+    }
+  },
+  "2026.2.25-beta.1": {
+    "fullVersion": "2026.2.25-beta.1",
+    "version": {
+      "major": 2026,
+      "minor": 2,
+      "patch": 25,
+      "pre": "beta.1",
+      "build": null
+    },
+    "debianDefault": "trixie",
+    "alpineDefault": "alpine3.23",
+    "variants": {
+      "trixie": [
+        "amd64",
+        "arm64v8"
+      ],
+      "bookworm": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.23": [
+        "amd64",
+        "arm64v8"
+      ],
+      "alpine3.22": [
+        "amd64",
+        "arm64v8"
+      ]
+    }
+  }
+}
