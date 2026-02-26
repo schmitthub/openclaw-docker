@@ -2,18 +2,19 @@
 
 ## Repository Overview
 
-This repository packages **OpenClaw** into Docker images for multiple Linux flavors and versions.
+This repository provides a Go CLI that builds **custom OpenClaw Dockerfiles** for multiple Linux flavors and versions.
 
 Primary goals:
-- Keep Dockerfiles reproducible and easy to build.
-- Support a matrix of Linux variants and version tags.
-- Make it straightforward to compare, maintain, and update base images over time.
+- Keep generated Dockerfiles reproducible and easy to build.
+- Support a customizable matrix of Linux variants and version tags.
+- Help users launch OpenClaw through Docker with secure-by-default settings.
+- Make it straightforward to maintain and update generation logic over time.
 
 ## What Agents Should Assume
 
 - The core artifact in this repo is Docker-related build configuration.
-- Dockerfiles in `dockerfiles/` are generated artifacts.
-- Version metadata comes from npm package `openclaw` via `versions.sh`.
+- Dockerfiles in `dockerfiles/` are generated artifacts from the CLI.
+- Version metadata comes from npm package `openclaw` via the Go CLI (`main.go`).
 - Changes should prioritize compatibility, determinism, and minimal image complexity.
 - Prefer small, focused edits rather than broad refactors.
 
@@ -30,7 +31,7 @@ When modifying this repository:
 ## Validation Expectations
 
 Before considering work complete, agents should:
-- Run `bash ./versions.sh latest beta && bash ./apply-templates.sh latest beta` after template/script changes.
+- Run `go run . --version latest --version beta --output ./dockerfiles --versions-file versions.json` after CLI/template changes.
 - Verify Dockerfile syntax and build steps for touched variants.
 - Ensure commands are non-interactive and CI-friendly.
 - Confirm OpenClaw installation/startup steps still work for the modified target image(s).
@@ -39,6 +40,7 @@ Before considering work complete, agents should:
 
 - Redesigning repository structure.
 - Adding unrelated tooling or frameworks.
+- Building registry publishing/release automation (for example pushing images to Docker Hub or GHCR).
 - Changing release/versioning policy beyond the requested task.
 
 ## Editing Style

@@ -1,18 +1,26 @@
 # openclaw-docker
 
-Docker image packaging for OpenClaw across multiple Linux flavors and versions.
+CLI for building custom OpenClaw Dockerfiles across multiple Linux variants and versions.
 
 ## Overview
 
-- Resolves OpenClaw versions from the official npm source (`openclaw` package).
-- Supports npm dist-tags such as `latest` and `beta`, plus explicit version patterns.
-- Generates Dockerfiles per version/variant matrix under `dockerfiles/<version>/<variant>/`.
-- Installs OpenClaw in images via the official installer command:
+- Standalone Go CLI (Cobra) with entrypoint in `main.go`.
+- Resolves OpenClaw versions from npm package `openclaw` (dist-tags first, semver fallback).
+- Lets you customize generated outputs via flags and explicit config file input.
+- Generates Dockerfiles per version/variant matrix at `<output>/<version>/<variant>/Dockerfile`.
+- Focuses on empowering users to run OpenClaw via Docker with secure-by-default images.
+- Supports config file input via explicit `--config|-f` only (no discovery), with flags taking precedence.
+- Installs OpenClaw in images via:
 	`curl -fsSL https://openclaw.ai/install.sh | bash`
+
+## Scope
+
+- In scope: generating and maintaining Dockerfiles that make OpenClaw easy to launch securely.
+- Out of scope: registry publishing workflows (for example Docker Hub/GHCR push automation and release pipelines).
 
 ## Variants
 
-Current variants are defined in `versions.sh` and include:
+Current default variants are defined in the CLI defaults and include:
 
 - `trixie`
 - `bookworm`
@@ -21,7 +29,7 @@ Current variants are defined in `versions.sh` and include:
 
 ## Version and tag resolution
 
-- `versions.sh` queries npm package metadata from `openclaw`.
+- The CLI queries npm package metadata from `openclaw`.
 - Dist-tags (for example `latest`, `beta`) are resolved first.
 - If an input is not a dist-tag, semver matching is used.
 - Resolved versions are written to `versions.json`.
@@ -29,38 +37,45 @@ Current variants are defined in `versions.sh` and include:
 ## Common commands
 
 ```bash
-# resolve default versions and regenerate Dockerfiles
-make update
+# generate Dockerfiles (default versions: latest)
+go run .
 
-# resolve explicit dist-tags
-make update VERSIONS='latest beta'
+# explicit tags/versions
+go run . --version latest --version beta
 
-# resolve an explicit version pattern (example)
-make update VERSIONS='2026.2'
+# explicit output directory
+go run . --version latest --output ./dockerfiles
 
-# regenerate Dockerfiles from existing versions.json
-make apply-templates
+# config file (explicit path only)
+go run . --config ./config.yaml
 
-# list versions and variants
-make list-versions
-make list-variants VERSION=<version>
+# config + flag precedence override
+go run . --config ./config.yaml --output ./dockerfiles
 
-# build one image
-make build VERSION=<version> VARIANT=alpine3.23
-
-# build all variants for one version
-make build-version VERSION=<version>
-
-# build all versions/variants currently generated
-make build-all
+# optional explicit commands
+go run . resolve --version latest
+go run . render --versions-file versions.json --output ./dockerfiles
 ```
+
+### Output behavior
+
+- `--output|-o` controls Dockerfile output root.
+- If omitted, output defaults to current working directory.
+
+### Config behavior
+
+- Config file path must be passed explicitly using `--config` or `-f`.
+- No automatic config discovery is performed.
+- Flags always override values from config.
 
 ## Repository structure
 
-- `versions.sh`: resolves versions/tags and generates `versions.json`
-- `apply-templates.sh`: renders Dockerfiles from template + versions metadata
-- `build/templates/Dockerfile.template`: source Dockerfile template
+- `main.go`: CLI entrypoint
+- `internal/cmd`: Cobra root/commands
+- `internal/config`: YAML config loading
+- `internal/versions`: npm resolution + manifest IO
+- `internal/render`: Dockerfile generation + cleanup
 - `build/templates/docker-entrypoint.sh`: runtime entrypoint behavior
 - `build/templates/docker-init-firewall.sh`: optional firewall setup helper
-- `dockerfiles/`: generated output, not edited directly
+- `dockerfiles/`: one generated output location (when used as `--output`)
 

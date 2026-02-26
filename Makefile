@@ -10,17 +10,17 @@ DOCKER_USERNAME ?= $(shell echo $$DOCKER_USERNAME)
 VERSIONS ?= latest
 
 help:
-	@echo "OpenClaw Docker Images"
+	@echo "OpenClaw Dockerfile CLI (local use)"
 	@echo ""
 	@echo "Update targets:"
 	@echo "  update              Fetch version info and generate Dockerfiles (default: latest)"
 	@echo "  update VERSIONS='latest beta'  Update specific dist-tags"
-	@echo "  apply-templates     Re-generate Dockerfiles from template (uses versions.json)"
+	@echo "  apply-templates     Re-generate Dockerfiles from versions.json"
 	@echo ""
-	@echo "Build targets:"
-	@echo "  build VERSION=x.x.x VARIANT=variant  Build a specific version/variant"
-	@echo "  build-version VERSION=x.x.x          Build all variants for a version"
-	@echo "  build-all                            Build all versions and variants"
+	@echo "Local build targets:"
+	@echo "  build VERSION=x.x.x VARIANT=variant  Build one local image tag"
+	@echo "  build-version VERSION=x.x.x          Build all local tags for one version"
+	@echo "  build-all                            Build all local tags"
 	@echo ""
 	@echo "Info targets:"
 	@echo "  list-versions       List available versions in versions.json"
@@ -28,6 +28,9 @@ help:
 	@echo ""
 	@echo "Other targets:"
 	@echo "  clean               Remove generated Dockerfiles"
+	@echo ""
+	@echo "Scope note:"
+	@echo "  This Makefile does not publish or push images to registries."
 	@echo ""
 	@echo "Examples:"
 	@echo "  make update"
@@ -39,13 +42,12 @@ help:
 # Update versions.json and generate Dockerfiles
 update:
 	@echo "Updating versions: $(VERSIONS)"
-	./versions.sh $(VERSIONS)
-	./apply-templates.sh
+	go run . $(foreach v,$(VERSIONS),--version $(v)) --output $(DOCKERFILES_DIR) --versions-file versions.json
 
 # Re-apply templates without fetching new version info
 apply-templates:
-	@echo "Generating Dockerfiles from template..."
-	./apply-templates.sh
+	@echo "Generating Dockerfiles from versions manifest..."
+	go run . render --versions-file versions.json --output $(DOCKERFILES_DIR)
 
 # Build a specific version/variant
 build:

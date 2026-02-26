@@ -1,5 +1,5 @@
 #
-# NOTE: THIS DOCKERFILE IS GENERATED VIA "apply-templates.sh"
+# NOTE: THIS DOCKERFILE IS GENERATED VIA "openclaw-docker"
 #
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
@@ -36,7 +36,6 @@ RUN apk add --no-cache \
   musl-locales \
   musl-locales-lang \
   && rm -rf /var/cache/apk/*
-
 
 # Install Docker CLI (not daemon - we use host's Docker via socket mount)
 RUN apk add --no-cache \
