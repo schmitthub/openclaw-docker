@@ -20,3 +20,26 @@ repos:
         types: [go]
         pass_filenames: false
 
+ # ── Lint ──────────────────────────────────────────────────────────────────
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.9.0
+    hooks:
+      - id: golangci-lint-full
+        args: [--config, .golangci.yml]
+
+  # ── Quality ─────────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: govulncheck
+        name: govulncheck SCA
+        entry: govulncheck ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-test
+        name: Unit tests
+        entry: make test
+        language: system
+        types: [go]
+        pass_filenames: false
