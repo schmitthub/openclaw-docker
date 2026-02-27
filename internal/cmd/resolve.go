@@ -20,7 +20,6 @@ func newResolveCmd() *cobra.Command {
 			}
 
 			manifest, err := versions.Resolve(context.Background(), versions.ResolveOptions{
-				PackageName:   opts.PackageName,
 				Requested:     opts.Versions,
 				DebianDefault: opts.DebianDefault,
 				AlpineDefault: opts.AlpineDefault,

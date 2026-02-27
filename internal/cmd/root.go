@@ -26,7 +26,6 @@ type runtimeOptions struct {
 	AlpineDefault   string
 	Variants        map[string][]string
 	Arches          []string
-	PackageName     string
 	VersionsCSVRaw  string
 	NoUpdateCheck   bool
 	DangerousInline bool
@@ -113,8 +112,7 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 			"alpine3.23": {},
 			"alpine3.22": {},
 		},
-		Arches:      []string{"amd64", "arm64v8"},
-		PackageName: "openclaw",
+		Arches: []string{"amd64", "arm64v8"},
 	}
 
 	if rootOpts.ConfigPath != "" {
@@ -152,9 +150,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		}
 		if len(fileCfg.Arches) > 0 {
 			merged.Arches = append([]string(nil), fileCfg.Arches...)
-		}
-		if fileCfg.PackageName != "" {
-			merged.PackageName = fileCfg.PackageName
 		}
 	}
 

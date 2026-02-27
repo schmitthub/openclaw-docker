@@ -8,21 +8,19 @@ import (
 	"strings"
 )
 
-func Resolve(ctx context.Context, opts ResolveOptions) (Manifest, error) {
-	if opts.PackageName == "" {
-		opts.PackageName = "openclaw"
-	}
+const npmPackageName = "openclaw"
 
+func Resolve(ctx context.Context, opts ResolveOptions) (Manifest, error) {
 	if len(opts.Requested) == 0 {
 		opts.Requested = []string{"latest"}
 	}
 
-	allVersions, err := npmVersions(ctx, opts.PackageName)
+	allVersions, err := npmVersions(ctx, npmPackageName)
 	if err != nil {
 		return Manifest{}, err
 	}
 
-	distTags, err := npmDistTags(ctx, opts.PackageName)
+	distTags, err := npmDistTags(ctx, npmPackageName)
 	if err != nil {
 		return Manifest{}, err
 	}

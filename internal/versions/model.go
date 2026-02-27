@@ -22,7 +22,6 @@ type Manifest struct {
 }
 
 type ResolveOptions struct {
-	PackageName   string
 	Requested     []string
 	DebianDefault string
 	AlpineDefault string

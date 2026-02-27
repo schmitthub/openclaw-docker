@@ -13,8 +13,8 @@ func confirmWrite(cmd *cobra.Command, dangerousInline bool, target string) error
 		return nil
 	}
 
-	fmt.Fprintf(cmd.ErrOrStderr(), "Defensive warning: write operation target: %s\n", target)
-	fmt.Fprint(cmd.ErrOrStderr(), "Proceed with this write? [y/N]: ")
+	fmt.Fprintf(cmd.ErrOrStderr(), "Warning! this operation will overwrite: %s\n", target)
+	fmt.Fprint(cmd.ErrOrStderr(), "Continue? [y/N]: ")
 
 	reader := bufio.NewReader(cmd.InOrStdin())
 	input, err := reader.ReadString('\n')

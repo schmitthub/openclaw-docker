@@ -18,7 +18,6 @@ type FileConfig struct {
 	AlpineDefault string              `yaml:"alpine_default"`
 	Variants      map[string][]string `yaml:"variants"`
 	Arches        []string            `yaml:"arches"`
-	PackageName   string              `yaml:"package_name"`
 }
 
 func Load(path string) (FileConfig, error) {
