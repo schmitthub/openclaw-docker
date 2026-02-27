@@ -29,3 +29,4 @@ Temporary Items
 .env
 .envrc
 .cache/
+bin/

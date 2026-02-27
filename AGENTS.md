@@ -14,6 +14,7 @@ Primary goals:
 
 - The core artifact in this repo is Docker-related build configuration.
 - Dockerfiles in `dockerfiles/` are generated artifacts from the CLI.
+- The CLI defaults output to `./openclawdockerfiles` when `--output` is omitted.
 - Version metadata comes from npm package `openclaw` via the Go CLI (`main.go`).
 - Changes should prioritize compatibility, determinism, and minimal image complexity.
 - Prefer small, focused edits rather than broad refactors.
@@ -32,9 +33,16 @@ When modifying this repository:
 
 Before considering work complete, agents should:
 - Run `go run . --version latest --version beta --output ./dockerfiles --versions-file "${XDG_CACHE_HOME:-$HOME/.cache}/openclaw-docker/versions.json"` after CLI/template changes.
+- For non-interactive validation, include `--dangerous-inline` to bypass per-write safety prompts.
 - Verify Dockerfile syntax and build steps for touched variants.
 - Ensure commands are non-interactive and CI-friendly.
 - Confirm OpenClaw installation/startup steps still work for the modified target image(s).
+
+## Safety Model
+
+- Generation is additive and overwrite-only; directory deletion is disabled.
+- `--cleanup` prints a defensive warning with the target path and does not delete files.
+- By default, writes prompt for confirmation; CI and automation should use `--dangerous-inline`.
 
 ## Out of Scope (Unless Explicitly Requested)
 

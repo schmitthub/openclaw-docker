@@ -32,6 +32,10 @@ func newResolveCmd() *cobra.Command {
 				return err
 			}
 
+			if err := confirmWrite(cmd, opts.DangerousInline, opts.VersionsFile); err != nil {
+				return err
+			}
+
 			if err := versions.WriteManifest(opts.VersionsFile, manifest); err != nil {
 				return err
 			}

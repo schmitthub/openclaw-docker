@@ -23,6 +23,7 @@ CLI for building custom OpenClaw Dockerfiles across multiple Linux variants and 
   `curl -fsSL https://openclaw.ai/install.sh | bash`
 - Includes CLI build metadata and a `version` command.
 - Checks for newer GitHub releases and shows upgrade hints after command execution.
+- Uses defensive write prompts by default for manifest and Dockerfile writes.
 
 ## Scope
 
@@ -64,6 +65,9 @@ go run . --config ./config.yaml
 # config + flag precedence override
 go run . --config ./config.yaml --output ./dockerfiles
 
+# approve each write interactively
+go run . --version latest --output ./dockerfiles
+
 # optional explicit commands
 go run . version
 go run . resolve --version latest
@@ -71,7 +75,25 @@ go run . render --versions-file "$XDG_CACHE_HOME/openclaw-docker/versions.json" 
 
 # disable update checks for a command
 go run . --no-update-check version
+
+# skip per-write prompts (non-interactive/CI)
+go run . --dangerous-inline --version latest
+
+# explicit subcommands in non-interactive mode
+go run . --dangerous-inline resolve --version latest
+go run . --dangerous-inline render --versions-file "$XDG_CACHE_HOME/openclaw-docker/versions.json" --output ./dockerfiles
 ```
+
+### Local PATH setup (direnv)
+
+If you use `direnv`, bootstrap local CLI binary path with:
+
+```bash
+cp .envrc.example .envrc
+direnv allow
+```
+
+This prepends `./bin` to `PATH` for this repository.
 
 ### Install script (Linux)
 
@@ -94,7 +116,11 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scr
 ### Output behavior
 
 - `--output|-o` controls Dockerfile output root.
-- If omitted, output defaults to current working directory.
+- If omitted, output defaults to `./openclawdockerfiles`.
+- Generation is additive and overwrite-only; existing generated files can be replaced, but directories are not deleted.
+- `--cleanup` prints a defensive warning with the target directory and still does not perform deletes.
+- By default, each manifest and Dockerfile write prompts for confirmation.
+- Use `--dangerous-inline` to bypass all write prompts (recommended for CI/non-interactive runs).
 
 ### Config behavior
 
@@ -108,7 +134,8 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scr
 - `internal/cmd`: Cobra root/commands
 - `internal/config`: YAML config loading
 - `internal/versions`: npm resolution + manifest IO
-- `internal/render`: Dockerfile generation + cleanup
+- `internal/render`: additive Dockerfile generation (overwrite-only)
+- `internal/update`: release update checks and local cache state
 - `build/templates/docker-entrypoint.sh`: runtime entrypoint behavior
 - `build/templates/docker-init-firewall.sh`: optional firewall setup helper
 - `dockerfiles/`: one generated output location (when used as `--output`)

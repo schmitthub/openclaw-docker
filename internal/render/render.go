@@ -16,6 +16,7 @@ type Options struct {
 	TemplatesDir string
 	Cleanup      bool
 	Requested    []string
+	ConfirmWrite func(path string) error
 }
 
 func Generate(opts Options) error {
@@ -27,11 +28,17 @@ func Generate(opts Options) error {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 
+	if opts.Cleanup {
+		fmt.Fprintf(
+			os.Stderr,
+			"Defensive warning: cleanup requested for %s\nPrompt: this path would be cleared in cleanup mode, but delete operations are disabled; continuing in additive overwrite-only mode.\n",
+			opts.OutputDir,
+		)
+	}
+
 	selected := selectVersions(opts.Manifest, opts.Requested)
-	selectedSet := make(map[string]struct{}, len(selected))
 
 	for _, version := range selected {
-		selectedSet[version] = struct{}{}
 		meta := opts.Manifest.Entries[version]
 
 		variantNames := make([]string, 0, len(meta.Variants))
@@ -47,16 +54,15 @@ func Generate(opts Options) error {
 			}
 
 			dockerfilePath := filepath.Join(target, "Dockerfile")
+			if opts.ConfirmWrite != nil {
+				if err := opts.ConfirmWrite(dockerfilePath); err != nil {
+					return err
+				}
+			}
 			content := dockerfileFor(meta, variant, opts.TemplatesDir)
 			if err := os.WriteFile(dockerfilePath, []byte(content), 0o644); err != nil {
 				return fmt.Errorf("write dockerfile %q: %w", dockerfilePath, err)
 			}
-		}
-	}
-
-	if opts.Cleanup {
-		if err := cleanupObsolete(opts.OutputDir, selectedSet); err != nil {
-			return err
 		}
 	}
 
@@ -100,28 +106,6 @@ func selectVersions(manifest versions.Manifest, requested []string) []string {
 	}
 
 	return selection
-}
-
-func cleanupObsolete(outputDir string, keep map[string]struct{}) error {
-	entries, err := os.ReadDir(outputDir)
-	if err != nil {
-		return fmt.Errorf("read output directory for cleanup: %w", err)
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		if _, ok := keep[entry.Name()]; ok {
-			continue
-		}
-
-		if err := os.RemoveAll(filepath.Join(outputDir, entry.Name())); err != nil {
-			return fmt.Errorf("remove obsolete output dir %q: %w", entry.Name(), err)
-		}
-	}
-
-	return nil
 }
 
 func dockerfileFor(meta versions.ReleaseMeta, variant, templatesDir string) string {

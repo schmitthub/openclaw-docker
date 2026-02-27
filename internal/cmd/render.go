@@ -30,6 +30,9 @@ func newRenderCmd() *cobra.Command {
 				TemplatesDir: opts.TemplatesDir,
 				Cleanup:      opts.Cleanup,
 				Requested:    opts.Versions,
+				ConfirmWrite: func(path string) error {
+					return confirmWrite(cmd, opts.DangerousInline, path)
+				},
 			}); err != nil {
 				return err
 			}

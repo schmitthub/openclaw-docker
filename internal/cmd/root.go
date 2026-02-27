@@ -15,20 +15,21 @@ import (
 )
 
 type runtimeOptions struct {
-	ConfigPath     string
-	OutputDir      string
-	VersionsFile   string
-	TemplatesDir   string
-	Versions       []string
-	Cleanup        bool
-	Debug          bool
-	DebianDefault  string
-	AlpineDefault  string
-	Variants       map[string][]string
-	Arches         []string
-	PackageName    string
-	VersionsCSVRaw string
-	NoUpdateCheck  bool
+	ConfigPath      string
+	OutputDir       string
+	VersionsFile    string
+	TemplatesDir    string
+	Versions        []string
+	Cleanup         bool
+	Debug           bool
+	DebianDefault   string
+	AlpineDefault   string
+	Variants        map[string][]string
+	Arches          []string
+	PackageName     string
+	VersionsCSVRaw  string
+	NoUpdateCheck   bool
+	DangerousInline bool
 }
 
 var rootOpts runtimeOptions
@@ -75,12 +76,13 @@ func newRootCmd(buildVersion, buildDate string) *cobra.Command {
 	}
 
 	cmd.PersistentFlags().StringVarP(&rootOpts.ConfigPath, "config", "f", "", "Path to YAML config file")
-	cmd.PersistentFlags().StringVarP(&rootOpts.OutputDir, "output", "o", "", "Dockerfile output directory (defaults to current working directory)")
+	cmd.PersistentFlags().StringVarP(&rootOpts.OutputDir, "output", "o", "", "Dockerfile output directory (defaults to ./openclawdockerfiles)")
 	cmd.PersistentFlags().StringVar(&rootOpts.VersionsFile, "versions-file", "", "Path to versions manifest JSON")
 	cmd.PersistentFlags().StringVar(&rootOpts.TemplatesDir, "templates-dir", "", "Template helper scripts directory used in generated Dockerfiles")
 	cmd.PersistentFlags().BoolVar(&rootOpts.Debug, "debug", false, "Enable debug logging")
 	cmd.PersistentFlags().BoolVar(&rootOpts.NoUpdateCheck, "no-update-check", false, "Disable release update checks")
-	cmd.PersistentFlags().BoolVar(&rootOpts.Cleanup, "cleanup", true, "Delete obsolete version output directories")
+	cmd.PersistentFlags().BoolVar(&rootOpts.Cleanup, "cleanup", false, "Show defensive cleanup warning (deletes are disabled; generation is overwrite-only)")
+	cmd.PersistentFlags().BoolVar(&rootOpts.DangerousInline, "dangerous-inline", false, "Skip write confirmation prompts and perform writes inline")
 	cmd.PersistentFlags().StringArrayVar(&rootOpts.Versions, "version", nil, "Requested version/tag (repeatable)")
 	cmd.PersistentFlags().StringVar(&rootOpts.VersionsCSVRaw, "versions", "", "Requested versions/tags as comma-separated list")
 
@@ -99,10 +101,10 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	}
 
 	merged := runtimeOptions{
-		OutputDir:     cwd,
+		OutputDir:     filepath.Join(cwd, "openclawdockerfiles"),
 		VersionsFile:  defaultVersionsFilePath(),
 		TemplatesDir:  "./build/templates",
-		Cleanup:       true,
+		Cleanup:       false,
 		DebianDefault: "trixie",
 		AlpineDefault: "alpine3.23",
 		Variants: map[string][]string{
@@ -170,6 +172,9 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	}
 	if cmd.Flags().Changed("debug") {
 		merged.Debug = rootOpts.Debug
+	}
+	if cmd.Flags().Changed("dangerous-inline") {
+		merged.DangerousInline = rootOpts.DangerousInline
 	}
 
 	if cmd.Flags().Changed("version") {

@@ -1,138 +1,87 @@
-.PHONY: help update apply-templates build build-version build-all \
-	list-versions list-variants clean test licenses licenses-check
+.DEFAULT_GOAL := help
 
-# Variables
-IMAGE_NAME ?= openclaw
-DOCKERFILES_DIR ?= ./dockerfiles
-VERSIONS_FILE ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/openclaw-docker/versions.json
-DOCKER_USERNAME ?= $(shell echo $$DOCKER_USERNAME)
+.PHONY: help build build-all run version test vet lint fmt tidy check \
+	licenses licenses-check release-dry-run clean
 
-# Default versions to update (latest)
-VERSIONS ?= latest
+BIN_DIR ?= ./bin
+BINARY ?= openclaw-docker
+MAIN_PACKAGE ?= .
+DIST_DIR ?= ./dist
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS ?= -s -w -X github.com/schmitthub/openclaw-docker/internal/build.Version=$(VERSION) -X github.com/schmitthub/openclaw-docker/internal/build.Date=$(DATE)
 
 help:
-	@echo "OpenClaw Dockerfile CLI (local use)"
+	@echo "OpenClaw Docker CLI - developer and CI tasks"
 	@echo ""
-	@echo "Update targets:"
-	@echo "  update              Fetch version info and generate Dockerfiles (default: latest)"
-	@echo "  update VERSIONS='latest beta'  Update specific dist-tags"
-	@echo "  apply-templates     Re-generate Dockerfiles from $(VERSIONS_FILE)"
+	@echo "Build and run:"
+	@echo "  build            Build local CLI binary to $(BIN_DIR)/$(BINARY)"
+	@echo "  build-all        Build release binaries for darwin/linux amd64/arm64"
+	@echo "  run              Run CLI from source (go run . --help)"
+	@echo "  version          Print resolved build version and metadata"
 	@echo ""
-	@echo "Local build targets:"
-	@echo "  build VERSION=x.x.x VARIANT=variant  Build one local image tag"
-	@echo "  build-version VERSION=x.x.x          Build all local tags for one version"
-	@echo "  build-all                            Build all local tags"
+	@echo "Quality gates:"
+	@echo "  test             Run unit tests"
+	@echo "  vet              Run go vet"
+	@echo "  lint             Run golangci-lint"
+	@echo "  fmt              Run gofmt on all Go files"
+	@echo "  tidy             Run go mod tidy"
+	@echo "  check            Run test + vet + lint"
 	@echo ""
-	@echo "Info targets:"
-	@echo "  list-versions       List available versions in $(VERSIONS_FILE)"
-	@echo "  list-variants       List variants for a VERSION"
-	@echo ""
-	@echo "Other targets:"
-	@echo "  clean               Remove generated Dockerfiles"
-	@echo ""
-	@echo "Scope note:"
-	@echo "  This Makefile does not publish or push images to registries."
-	@echo ""
-	@echo "Examples:"
-	@echo "  make update"
-	@echo "  make update VERSIONS='latest beta'"
-	@echo "  make build VERSION=<version> VARIANT=alpine3.23"
-	@echo "  make build-version VERSION=<version>"
-	@echo "  make build-all"
+	@echo "Release and housekeeping:"
+	@echo "  release-dry-run  Run goreleaser snapshot build"
+	@echo "  licenses-check   Validate required license docs exist"
+	@echo "  clean            Remove build artifacts"
 
-# Update versions manifest and generate Dockerfiles
-update:
-	@echo "Updating versions: $(VERSIONS)"
-	go run . $(foreach v,$(VERSIONS),--version $(v)) --output $(DOCKERFILES_DIR) --versions-file $(VERSIONS_FILE)
-
-# Re-apply templates without fetching new version info
-apply-templates:
-	@echo "Generating Dockerfiles from versions manifest..."
-	go run . render --versions-file $(VERSIONS_FILE) --output $(DOCKERFILES_DIR)
-
-# Build a specific version/variant
 build:
-ifndef VERSION
-	$(error VERSION is required. Usage: make build VERSION=x.x.x VARIANT=variant)
-endif
-ifndef VARIANT
-	$(error VARIANT is required. Usage: make build VERSION=x.x.x VARIANT=variant)
-endif
-	@if [ ! -f "$(DOCKERFILES_DIR)/$(VERSION)/$(VARIANT)/Dockerfile" ]; then \
-		echo "Error: Dockerfile not found at $(DOCKERFILES_DIR)/$(VERSION)/$(VARIANT)/Dockerfile"; \
-		echo "Run 'make list-variants VERSION=$(VERSION)' to see available variants"; \
-		exit 1; \
-	fi
-	@echo "Building $(IMAGE_NAME):$(VERSION)-$(VARIANT)..."
-	docker build -t $(IMAGE_NAME):$(VERSION)-$(VARIANT) \
-		-f $(DOCKERFILES_DIR)/$(VERSION)/$(VARIANT)/Dockerfile .
+	@mkdir -p $(BIN_DIR)
+	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(MAIN_PACKAGE)
 
-# Build all variants for a specific version
-build-version:
-ifndef VERSION
-	$(error VERSION is required. Usage: make build-version VERSION=x.x.x)
-endif
-	@if [ ! -d "$(DOCKERFILES_DIR)/$(VERSION)" ]; then \
-		echo "Error: Version $(VERSION) not found in $(DOCKERFILES_DIR)"; \
-		echo "Run 'make list-versions' to see available versions"; \
-		exit 1; \
-	fi
-	@echo "Building all variants for version $(VERSION)..."
-	@for variant in $$(ls $(DOCKERFILES_DIR)/$(VERSION)); do \
-		echo "Building $(IMAGE_NAME):$(VERSION)-$$variant..."; \
-		docker build -t $(IMAGE_NAME):$(VERSION)-$$variant \
-			-f $(DOCKERFILES_DIR)/$(VERSION)/$$variant/Dockerfile . || exit 1; \
-	done
-	@echo "All variants for $(VERSION) built successfully!"
-
-# Build all versions and variants
 build-all:
-	@echo "Building all versions and variants..."
-	@for version in $$(ls $(DOCKERFILES_DIR)); do \
-		for variant in $$(ls $(DOCKERFILES_DIR)/$$version); do \
-			echo "Building $(IMAGE_NAME):$$version-$$variant..."; \
-			docker build -t $(IMAGE_NAME):$$version-$$variant \
-				-f $(DOCKERFILES_DIR)/$$version/$$variant/Dockerfile . || exit 1; \
+	@mkdir -p $(DIST_DIR)
+	@set -e; \
+	for os in darwin linux; do \
+		for arch in amd64 arm64; do \
+			out="$(DIST_DIR)/$(BINARY)-$$os-$$arch"; \
+			echo "Building $$out"; \
+			GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o "$$out" $(MAIN_PACKAGE); \
 		done; \
 	done
-	@echo "All images built successfully!"
 
-# List available versions
-list-versions:
-	@echo "Available versions:"
-	@jq -r 'keys[]' $(VERSIONS_FILE) 2>/dev/null || ls $(DOCKERFILES_DIR) 2>/dev/null || echo "No versions found. Run 'make update' first."
+run:
+	go run . --help
 
-# List variants for a version
-list-variants:
-ifndef VERSION
-	$(error VERSION is required. Usage: make list-variants VERSION=x.x.x)
-endif
-	@echo "Variants for version $(VERSION):"
-	@jq -r '.["$(VERSION)"].variants | keys[]' $(VERSIONS_FILE) 2>/dev/null || \
-		ls $(DOCKERFILES_DIR)/$(VERSION) 2>/dev/null || \
-		echo "Version $(VERSION) not found."
+version:
+	@echo "VERSION=$(VERSION)"
+	@echo "DATE=$(DATE)"
 
-# Clean generated Dockerfiles
-clean:
-	@echo "Removing generated Dockerfiles..."
-	rm -rf $(DOCKERFILES_DIR)/*
-	@echo "Cleanup complete!"
-
-# Run unit tests
 test:
 	go test ./...
 
-# ============================================================================
-# License Targets
-# ============================================================================
+vet:
+	go vet ./...
 
-# Validate required license documentation exists
+lint:
+	golangci-lint run --config .golangci.yml
+
+fmt:
+	@gofmt -w $$(find . -type f -name '*.go' -not -path './vendor/*')
+
+tidy:
+	go mod tidy
+
+check: test vet lint
+
 licenses:
 	@echo "Validating license documentation..."
 	@test -f LICENSE || (echo "ERROR: LICENSE is missing" >&2; exit 1)
 	@test -f README.md || (echo "ERROR: README.md is missing" >&2; exit 1)
 	@echo "License documentation is present."
 
-# CI license check target
-licenses-check:
-	@$(MAKE) licenses
+licenses-check: licenses
+
+release-dry-run:
+	goreleaser release --snapshot --clean
+
+clean:
+	rm -rf $(BIN_DIR) $(DIST_DIR) coverage.out

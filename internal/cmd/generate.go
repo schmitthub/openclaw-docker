@@ -39,6 +39,10 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	if err := confirmWrite(cmd, opts.DangerousInline, opts.VersionsFile); err != nil {
+		return err
+	}
+
 	if err := versions.WriteManifest(opts.VersionsFile, manifest); err != nil {
 		return err
 	}
@@ -48,6 +52,9 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		OutputDir:    opts.OutputDir,
 		TemplatesDir: opts.TemplatesDir,
 		Cleanup:      opts.Cleanup,
+		ConfirmWrite: func(path string) error {
+			return confirmWrite(cmd, opts.DangerousInline, path)
+		},
 	}); err != nil {
 		return err
 	}
