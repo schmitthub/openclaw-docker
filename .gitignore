@@ -27,4 +27,5 @@ Temporary Items
 
 # Local/generated helper files
 .env
+.envrc
 .cache/
