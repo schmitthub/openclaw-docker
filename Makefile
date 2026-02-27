@@ -1,9 +1,10 @@
 .PHONY: help update apply-templates build build-version build-all \
-        list-versions list-variants clean
+	list-versions list-variants clean test licenses licenses-check
 
 # Variables
 IMAGE_NAME ?= openclaw
 DOCKERFILES_DIR ?= ./dockerfiles
+VERSIONS_FILE ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/openclaw-docker/versions.json
 DOCKER_USERNAME ?= $(shell echo $$DOCKER_USERNAME)
 
 # Default versions to update (latest)
@@ -15,7 +16,7 @@ help:
 	@echo "Update targets:"
 	@echo "  update              Fetch version info and generate Dockerfiles (default: latest)"
 	@echo "  update VERSIONS='latest beta'  Update specific dist-tags"
-	@echo "  apply-templates     Re-generate Dockerfiles from versions.json"
+	@echo "  apply-templates     Re-generate Dockerfiles from $(VERSIONS_FILE)"
 	@echo ""
 	@echo "Local build targets:"
 	@echo "  build VERSION=x.x.x VARIANT=variant  Build one local image tag"
@@ -23,7 +24,7 @@ help:
 	@echo "  build-all                            Build all local tags"
 	@echo ""
 	@echo "Info targets:"
-	@echo "  list-versions       List available versions in versions.json"
+	@echo "  list-versions       List available versions in $(VERSIONS_FILE)"
 	@echo "  list-variants       List variants for a VERSION"
 	@echo ""
 	@echo "Other targets:"
@@ -39,15 +40,15 @@ help:
 	@echo "  make build-version VERSION=<version>"
 	@echo "  make build-all"
 
-# Update versions.json and generate Dockerfiles
+# Update versions manifest and generate Dockerfiles
 update:
 	@echo "Updating versions: $(VERSIONS)"
-	go run . $(foreach v,$(VERSIONS),--version $(v)) --output $(DOCKERFILES_DIR) --versions-file versions.json
+	go run . $(foreach v,$(VERSIONS),--version $(v)) --output $(DOCKERFILES_DIR) --versions-file $(VERSIONS_FILE)
 
 # Re-apply templates without fetching new version info
 apply-templates:
 	@echo "Generating Dockerfiles from versions manifest..."
-	go run . render --versions-file versions.json --output $(DOCKERFILES_DIR)
+	go run . render --versions-file $(VERSIONS_FILE) --output $(DOCKERFILES_DIR)
 
 # Build a specific version/variant
 build:
@@ -99,7 +100,7 @@ build-all:
 # List available versions
 list-versions:
 	@echo "Available versions:"
-	@jq -r 'keys[]' versions.json 2>/dev/null || ls $(DOCKERFILES_DIR) 2>/dev/null || echo "No versions found. Run 'make update' first."
+	@jq -r 'keys[]' $(VERSIONS_FILE) 2>/dev/null || ls $(DOCKERFILES_DIR) 2>/dev/null || echo "No versions found. Run 'make update' first."
 
 # List variants for a version
 list-variants:
@@ -107,7 +108,7 @@ ifndef VERSION
 	$(error VERSION is required. Usage: make list-variants VERSION=x.x.x)
 endif
 	@echo "Variants for version $(VERSION):"
-	@jq -r '.["$(VERSION)"].variants | keys[]' versions.json 2>/dev/null || \
+	@jq -r '.["$(VERSION)"].variants | keys[]' $(VERSIONS_FILE) 2>/dev/null || \
 		ls $(DOCKERFILES_DIR)/$(VERSION) 2>/dev/null || \
 		echo "Version $(VERSION) not found."
 
@@ -116,3 +117,22 @@ clean:
 	@echo "Removing generated Dockerfiles..."
 	rm -rf $(DOCKERFILES_DIR)/*
 	@echo "Cleanup complete!"
+
+# Run unit tests
+test:
+	go test ./...
+
+# ============================================================================
+# License Targets
+# ============================================================================
+
+# Validate required license documentation exists
+licenses:
+	@echo "Validating license documentation..."
+	@test -f LICENSE || (echo "ERROR: LICENSE is missing" >&2; exit 1)
+	@test -f README.md || (echo "ERROR: README.md is missing" >&2; exit 1)
+	@echo "License documentation is present."
+
+# CI license check target
+licenses-check:
+	@$(MAKE) licenses

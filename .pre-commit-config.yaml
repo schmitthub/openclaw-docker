@@ -43,3 +43,10 @@ repos:
         language: system
         types: [go]
         pass_filenames: false
+
+      - id: licenses-check
+        name: NOTICE freshness
+        entry: make licenses-check
+        language: system
+        files: ^go\.(mod|sum)$
+        pass_filenames: false

@@ -1,5 +1,14 @@
 # openclaw-docker
 
+![Go 1.22](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)
+![Cobra 1.8.1](https://img.shields.io/badge/Cobra-1.8.1-38BDAE)
+![Semver 3.3.0](https://img.shields.io/badge/Masterminds%2Fsemver-3.3.0-5A67D8)
+![YAML v3.0.1](https://img.shields.io/badge/yaml.v3-3.0.1-CB171E)
+![GoReleaser v2](https://img.shields.io/badge/GoReleaser-v2-00ADD8)
+[![OpenClaw](https://img.shields.io/badge/OpenClaw-supported-6E56CF)](https://docs.openclaw.ai/install/docker)
+![macOS](https://img.shields.io/badge/macOS-supported-000000?logo=apple&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)
+
 CLI for building custom OpenClaw Dockerfiles across multiple Linux variants and versions.
 
 ## Overview
@@ -11,7 +20,9 @@ CLI for building custom OpenClaw Dockerfiles across multiple Linux variants and 
 - Focuses on empowering users to run OpenClaw via Docker with secure-by-default images.
 - Supports config file input via explicit `--config|-f` only (no discovery), with flags taking precedence.
 - Installs OpenClaw in images via:
-	`curl -fsSL https://openclaw.ai/install.sh | bash`
+  `curl -fsSL https://openclaw.ai/install.sh | bash`
+- Includes CLI build metadata and a `version` command.
+- Checks for newer GitHub releases and shows upgrade hints after command execution.
 
 ## Scope
 
@@ -32,7 +43,8 @@ Current default variants are defined in the CLI defaults and include:
 - The CLI queries npm package metadata from `openclaw`.
 - Dist-tags (for example `latest`, `beta`) are resolved first.
 - If an input is not a dist-tag, semver matching is used.
-- Resolved versions are written to `versions.json`.
+- Resolved versions are written to `$XDG_CACHE_HOME/openclaw-docker/versions.json`.
+- If `XDG_CACHE_HOME` is not set, the fallback path is `~/.cache/openclaw-docker/versions.json`.
 
 ## Common commands
 
@@ -53,9 +65,31 @@ go run . --config ./config.yaml
 go run . --config ./config.yaml --output ./dockerfiles
 
 # optional explicit commands
+go run . version
 go run . resolve --version latest
-go run . render --versions-file versions.json --output ./dockerfiles
+go run . render --versions-file "$XDG_CACHE_HOME/openclaw-docker/versions.json" --output ./dockerfiles
+
+# disable update checks for a command
+go run . --no-update-check version
 ```
+
+### Install script (Linux)
+
+```bash
+# local install/update (default: ~/.local/bin)
+curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash
+
+# global install/update (/usr/local/bin)
+curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash -s -- --global
+
+# install a specific version
+curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash -s -- --version v0.1.0
+```
+
+### Update checks
+
+- By default the CLI checks `schmitthub/openclaw-docker` releases with a cached interval and prints a concise upgrade hint when a newer version exists.
+- Disable checks per invocation with `--no-update-check`.
 
 ### Output behavior
 

@@ -31,7 +31,7 @@ When modifying this repository:
 ## Validation Expectations
 
 Before considering work complete, agents should:
-- Run `go run . --version latest --version beta --output ./dockerfiles --versions-file versions.json` after CLI/template changes.
+- Run `go run . --version latest --version beta --output ./dockerfiles --versions-file "${XDG_CACHE_HOME:-$HOME/.cache}/openclaw-docker/versions.json"` after CLI/template changes.
 - Verify Dockerfile syntax and build steps for touched variants.
 - Ensure commands are non-interactive and CI-friendly.
 - Confirm OpenClaw installation/startup steps still work for the modified target image(s).

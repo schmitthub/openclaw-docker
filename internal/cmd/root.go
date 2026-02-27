@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/openclaw-docker/internal/config"
+	"github.com/schmitthub/openclaw-docker/internal/update"
 )
 
 type runtimeOptions struct {
@@ -24,15 +28,46 @@ type runtimeOptions struct {
 	Arches         []string
 	PackageName    string
 	VersionsCSVRaw string
+	NoUpdateCheck  bool
 }
 
 var rootOpts runtimeOptions
 
-func Execute() error {
-	return newRootCmd().Execute()
+func Execute(buildVersion, buildDate string) error {
+	rootCmd := newRootCmd(buildVersion, buildDate)
+	_, err := rootCmd.ExecuteC()
+	if err != nil {
+		return err
+	}
+
+	if rootOpts.NoUpdateCheck {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	statePath, stateErr := update.DefaultStatePath()
+	if stateErr != nil {
+		return nil
+	}
+
+	result, checkErr := update.CheckForUpdate(ctx, statePath, buildVersion, "schmitthub/openclaw-docker")
+	if checkErr != nil || result == nil || !result.UpdateAvailable {
+		return nil
+	}
+
+	fmt.Fprintf(
+		rootCmd.OutOrStdout(),
+		"\nUpdate available: %s -> %s\nInstall with:\n  brew upgrade openclaw-docker\n  curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash\n\n",
+		result.CurrentVersion,
+		result.LatestVersion,
+	)
+
+	return nil
 }
 
-func newRootCmd() *cobra.Command {
+func newRootCmd(buildVersion, buildDate string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "openclaw-docker",
 		Short: "Generate OpenClaw Dockerfiles",
@@ -44,10 +79,12 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&rootOpts.VersionsFile, "versions-file", "", "Path to versions manifest JSON")
 	cmd.PersistentFlags().StringVar(&rootOpts.TemplatesDir, "templates-dir", "", "Template helper scripts directory used in generated Dockerfiles")
 	cmd.PersistentFlags().BoolVar(&rootOpts.Debug, "debug", false, "Enable debug logging")
+	cmd.PersistentFlags().BoolVar(&rootOpts.NoUpdateCheck, "no-update-check", false, "Disable release update checks")
 	cmd.PersistentFlags().BoolVar(&rootOpts.Cleanup, "cleanup", true, "Delete obsolete version output directories")
 	cmd.PersistentFlags().StringArrayVar(&rootOpts.Versions, "version", nil, "Requested version/tag (repeatable)")
 	cmd.PersistentFlags().StringVar(&rootOpts.VersionsCSVRaw, "versions", "", "Requested versions/tags as comma-separated list")
 
+	cmd.AddCommand(newVersionCmd(buildVersion, buildDate))
 	cmd.AddCommand(newGenerateCmd())
 	cmd.AddCommand(newResolveCmd())
 	cmd.AddCommand(newRenderCmd())
@@ -63,7 +100,7 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 
 	merged := runtimeOptions{
 		OutputDir:     cwd,
-		VersionsFile:  "versions.json",
+		VersionsFile:  defaultVersionsFilePath(),
 		TemplatesDir:  "./build/templates",
 		Cleanup:       true,
 		DebianDefault: "trixie",
@@ -164,4 +201,17 @@ func splitCSV(raw string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func defaultVersionsFilePath() string {
+	if xdgCache := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME")); xdgCache != "" {
+		return filepath.Join(xdgCache, "openclaw-docker", "versions.json")
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err == nil && homeDir != "" {
+		return filepath.Join(homeDir, ".cache", "openclaw-docker", "versions.json")
+	}
+
+	return filepath.Join(".cache", "openclaw-docker", "versions.json")
 }

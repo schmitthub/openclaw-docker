@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 func WriteManifest(path string, manifest Manifest) error {
@@ -38,6 +39,10 @@ func WriteManifest(path string, manifest Manifest) error {
 	}
 
 	buf.WriteString("}\n")
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create manifest directory: %w", err)
+	}
 
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
