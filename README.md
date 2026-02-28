@@ -34,10 +34,33 @@ cd openclaw-docker
 go build -o openclaw-docker .
 ```
 
+### Quick Start with Discord
+
+Follow [their Discord Bot setup instructions](https://docs.openclaw.ai/channels/discord)
+
+Once you have your bot token...
+
+```bash
+openclaw-docker generate --allowed-domains "discord.com,gateway.discord.gg,cdn.discordapp.com"
+cd openclaw-deploy
+./setup.sh # enter your API keys, models, discord bot token, etc
+# You should now have a local docker compose stack with OpenClaw and Envoy running, with only access to the allowed domains, most AI providers, clawhub, and homebrew domains for installing tools and skills. If stuff is blocked update envoy's config to add more or reurn the command (but it will overwrite currently)
+# Visit https://localhost/?token=<your-token> (outputted during setup) to access the dashboard, and accept the self-signed certificate warning.
+./openclaw devices approve --latest # this script gives you access to an external container pre-paired with the gateway and envoy's selfed signed certs trusted so that wss:// works. It's essentially a "remote" CLI connecting through the proxy to your gateway. Approves your webUI pairing
+# DM your discord bot and get a pairing code then...
+docker compose exec openclaw-gateway openclaw pairing approve discord XXXXXXXX # ./openclaw remote container script doesn't seem to have the permissions for some reason to approve channel pairing... figuring that out next.
+docker compose restart openclaw-gateway
+```
+
+You can manually modify openclaw.json in `data/config/openclaw.json` to add your Discord guild (server ID) and set `requireMention` settings etc. You should be chattin away now.
+
+You can also deploy this to a server with mTLS (to lock down the origin behind something like Cloudflare) by generating with `--external-origin` and following the server deployment instructions below. I don't have certbot integration yet. Envoy will have mTLS commented out in `compose/envoy/envoy.yaml` by default, but you can uncomment it and add the Cloudflare origin pull CA cert to require mTLS client certs for all incoming connections, and it will accept your self signed cert from the Cloudflare SSL dashboard.
+
 ## Table of Contents
 
 - [openclaw-docker](#openclaw-docker)
   - [Install](#install)
+    - [Quick Start with Discord](#quick-start-with-discord)
   - [Table of Contents](#table-of-contents)
   - [Architecture](#architecture)
   - [Threat Model](#threat-model)
@@ -65,6 +88,10 @@ go build -o openclaw-docker .
 │  Host                                                                │
 │                                                                      │
 │   Browser ─── https://localhost ──┐                                  │
+│                                   │                                  │
+│   ./openclaw <cmd> ───────────────┤ (docker run, wss://envoy:443)   │
+│     (remote CLI client)           │  NODE_EXTRA_CA_CERTS for TLS    │
+│     data/cli-config/ bind mount   │  device-paired for auth         │
 │                                   │                                  │
 │   ┌───────────────────────────────┼────────────────────────────────┐ │
 │   │  openclaw-egress network      │                                │ │
@@ -106,19 +133,11 @@ go build -o openclaw-docker .
 │   │   │  • Drops to node user via gosu            │                │ │
 │   │   │  • No proxy env vars — apps unaware       │                │ │
 │   │   └───────────────────────────────────────────┘                │ │
-│   │                                                                │ │
-│   │   ┌───────────────────────────────────────────┐                │ │
-│   │   │          openclaw-cli                      │                │ │
-│   │   │  • Same image, entrypoint: ["openclaw"]   │                │ │
-│   │   │  • dns: [172.28.0.2] (Envoy)              │                │ │
-│   │   │  • Config management (onboard, config)    │                │ │
-│   │   │  • Channel setup (WhatsApp, Telegram)     │                │ │
-│   │   │  • Run-and-exit (no restart policy)       │                │ │
-│   │   └───────────────────────────────────────────┘                │ │
 │   └────────────────────────────────────────────────────────────────┘ │
 │                                                                      │
-│   data/config/    ← bind-mounted config (openclaw.json, identity/)  │
-│   data/workspace/ ← bind-mounted workspace                          │
+│   data/config/     ← gateway config (openclaw.json, identity/)      │
+│   data/cli-config/ ← CLI remote config + device identity            │
+│   data/workspace/  ← bind-mounted workspace                         │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -169,15 +188,15 @@ openclaw-deploy/
 ├── compose/
 │   ├── envoy/
 │   │   ├── envoy.yaml          # Ingress + egress proxy config
-│   │   ├── server-cert.pem     # Self-signed TLS cert
+│   │   ├── server-cert.pem     # Self-signed TLS cert (SANs: localhost, envoy, gateway)
 │   │   └── server-key.pem      # TLS private key
 │   └── openclaw/
 │       ├── Dockerfile           # node:22-bookworm + iptables + iproute2 + gosu + pnpm + bun
 │       └── entrypoint.sh        # iptables setup, drops to node user
-├── compose.yaml                 # 3 services: envoy, gateway, cli
+├── compose.yaml                 # 2 services: envoy, openclaw-gateway
 ├── .env.openclaw                # Runtime env vars (token, ports, bind)
-├── setup.sh                     # Interactive setup: build, onboard, configure, start
-├── openclaw                     # CLI wrapper (runs docker compose run --rm openclaw-cli)
+├── setup.sh                     # Build, onboard, configure, pair CLI, start
+├── openclaw                     # CLI wrapper (docker run, remote client via wss://envoy:443)
 └── manifest.json                # Resolved version metadata
 ```
 
@@ -191,15 +210,16 @@ cd openclaw-deploy
 `setup.sh` does the following in order:
 
 1. Creates `data/config/`, `data/workspace/`, `data/config/identity/`
-2. Generates a gateway token (or reuses existing)
-3. Writes token + ports to `.env.openclaw`
-4. Builds Docker images (`docker compose build`)
-5. Runs interactive onboarding (`openclaw onboard --no-install-daemon`)
-6. Sets gateway auth token via CLI (ensures config matches `.env.openclaw`)
-7. Disables device auth ([upstream bug](https://github.com/openclaw/openclaw/issues/25293) — incompatible with reverse proxy)
-8. Configures trusted proxies for Docker network CIDRs
-9. Sets Control UI allowed origins (`https://localhost`)
-10. Starts services (`docker compose up -d`)
+2. Builds Docker images (`docker compose build`)
+3. Runs interactive onboarding (`openclaw onboard --no-install-daemon`) — skippable with `--skip-onboarding`
+4. Sets `gateway.mode local` (safety net — required for gateway to start)
+5. Generates a gateway token (or reuses from onboarding)
+6. Configures gateway auth, trusted proxies, Control UI origins, mDNS off (via `gw_config`)
+7. Configures CLI for remote access (`wss://envoy:443`) via `./openclaw` wrapper
+8. Starts services (`docker compose up -d`)
+9. Waits for gateway, pairs CLI device (`devices approve --latest`)
+
+Gateway config is managed via `gw_config` (a `docker compose run --no-deps` helper that passes `openclaw` as CMD to entrypoint.sh). The CLI runs as a `docker run --rm` container on the `openclaw-egress` network with its config bind-mounted from `data/cli-config/`, connecting to the gateway through Envoy's TLS ingress as a remote client.
 
 ### 3. Open the dashboard
 
@@ -225,7 +245,9 @@ openclaw-docker generate \
   --dangerous-inline
 ```
 
-This adds your domain to the Control UI's `allowedOrigins` list alongside `https://localhost`.
+This adds your domain to:
+- The Control UI's `allowedOrigins` list alongside `https://localhost`
+- The self-signed TLS certificate SANs (so `NODE_EXTRA_CA_CERTS` works for the hostname)
 
 ### 2. Point your reverse proxy at port 443
 
@@ -254,20 +276,16 @@ With mTLS enabled, only requests presenting a valid Cloudflare client certificat
 
 ## Common Operations
 
-The generated `openclaw` wrapper script passes all arguments through to `docker compose run --rm openclaw-cli`:
+The `./openclaw` wrapper runs a `docker run --rm` container on the `openclaw-egress` network that connects to the gateway as a remote client via `wss://envoy:443`. Config and device identity persist via bind mount at `data/cli-config/`. Trusts the self-signed TLS cert via `NODE_EXTRA_CA_CERTS`.
 
 ```bash
-# View gateway config
-./openclaw-deploy/openclaw config get gateway
+# List paired devices
+./openclaw-deploy/openclaw devices list
 
-# View channel config
-./openclaw-deploy/openclaw config get channels
-
-# Set Discord bot token
-./openclaw-deploy/openclaw config set channels.discord.token "\"${DISCORD_BOT_TOKEN}\"" --json
-
-# Enable Discord channel
-./openclaw-deploy/openclaw config set channels.discord.enabled true --json
+# Channel setup (WhatsApp QR, Telegram bot, Discord bot)
+./openclaw-deploy/openclaw channels login
+./openclaw-deploy/openclaw channels add --channel telegram --token <token>
+./openclaw-deploy/openclaw channels add --channel discord --token <token>
 
 # List Discord pairing requests
 ./openclaw-deploy/openclaw pairing list discord
@@ -286,6 +304,15 @@ docker compose -f ./openclaw-deploy/compose.yaml restart envoy
 
 # Stop everything
 docker compose -f ./openclaw-deploy/compose.yaml down
+```
+
+**Gateway config changes** (e.g., auth, trusted proxies) require direct file access via compose:
+
+```bash
+cd openclaw-deploy
+docker compose run --rm --no-deps openclaw-gateway openclaw config get gateway
+docker compose run --rm --no-deps openclaw-gateway openclaw config set <key> <value>
+docker compose restart openclaw-gateway  # apply changes
 ```
 
 ## Egress Domain Whitelist
@@ -332,7 +359,7 @@ Config precedence: **flags > env vars (`OPENCLAW_DOCKER_*`) > config file > defa
 
 The OpenClaw Control UI WebSocket connection bypasses `gateway.auth.mode` and always requires device pairing, even when running behind a trusted proxy with correct headers. This is an [upstream bug](https://github.com/openclaw/openclaw/issues/25293) ([#4941](https://github.com/openclaw/openclaw/issues/4941)).
 
-**Workaround:** `setup.sh` automatically sets `gateway.controlUi.dangerouslyDisableDeviceAuth: true`. Token auth + TLS termination at Envoy is the actual security boundary.
+**Current approach:** `setup.sh` pairs the CLI device automatically during setup (`devices approve --latest`). The CLI connects through Envoy's TLS ingress (`wss://envoy:443`) as a remote client with its own device identity. Token auth + TLS termination at Envoy is the security boundary for the Control UI.
 
 ## Development
 

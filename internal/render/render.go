@@ -203,30 +203,6 @@ func composeFileContent(opts Options) string {
 		"    networks:",
 		"      - openclaw-internal",
 		"",
-		"  openclaw-cli:",
-		"    build:",
-		"      context: ./compose/openclaw",
-		"      dockerfile: Dockerfile",
-		"    user: \"1000:1000\"",
-		"    entrypoint: [\"openclaw\"]",
-		"    dns:",
-		"      - 172.28.0.2",
-		"    environment:",
-		"      HOME: /home/node",
-		"      TERM: xterm-256color",
-		"      BROWSER: echo",
-		"    env_file:",
-		"      - .env.openclaw",
-		"    volumes:",
-		fmt.Sprintf("      - ./data/config:%s", configDir),
-		fmt.Sprintf("      - ./data/workspace:%s", workspaceDir),
-		"    stdin_open: true",
-		"    tty: true",
-		"    init: true",
-		"    depends_on:",
-		"      - envoy",
-		"    networks:",
-		"      - openclaw-internal",
 		"",
 		"networks:",
 		"  openclaw-internal:",
@@ -314,14 +290,31 @@ FROM node:22-bookworm
 ARG OPENCLAW_DOCKER_APT_PACKAGES="%s"
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      iptables iproute2 gosu \
+      iptables iproute2 gosu libsecret-tools \
       $OPENCLAW_DOCKER_APT_PACKAGES && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-RUN corepack enable && \
-    corepack prepare pnpm@latest --activate && \
-    BUN_INSTALL=/usr/local curl -fsSL https://bun.sh/install | bash
+# Install Bun (required for build scripts).
+# Binary copied to /usr/local/bin/ so node user can access it at runtime.
+# (Symlinking through /root/ fails — root home is mode 0700.)
+RUN curl -fsSL https://bun.sh/install | bash && \
+    cp /root/.bun/bin/bun /usr/local/bin/bun
+
+# Install pnpm globally (used by OpenClaw for skill/plugin installs at runtime).
+# PNPM_HOME sets the global bin directory so pnpm install -g works as node user.
+ENV PNPM_HOME=/home/node/.local/share/pnpm
+ENV PATH="${PNPM_HOME}:${PATH}"
+RUN npm install -g pnpm && \
+    mkdir -p "${PNPM_HOME}" && chown -R node:node /home/node/.local
+
+# Install Homebrew (Linuxbrew). Installer refuses to run as root,
+# but needs the target directory to exist and be writable.
+RUN mkdir -p /home/linuxbrew/.linuxbrew && chown -R node:node /home/linuxbrew
+USER node
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+USER root
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
 
 WORKDIR /app
 RUN chown node:node /app
@@ -337,8 +330,9 @@ ENV OPENCLAW_GATEWAY_BIND=%s
 RUN mkdir -p "${OPENCLAW_CONFIG_DIR}" "${OPENCLAW_WORKSPACE_DIR}" && \
     chown -R node:node "${OPENCLAW_CONFIG_DIR}" "${OPENCLAW_WORKSPACE_DIR}"
 
-# Install OpenClaw via npm (global, as root → /usr/local)
-RUN SHARP_IGNORE_GLOBAL_LIBVIPS=1 \
+# Install OpenClaw via npm (global, as root → /usr/local).
+# NODE_OPTIONS reduces OOM risk on low-memory hosts (exit 137).
+RUN SHARP_IGNORE_GLOBAL_LIBVIPS=1 NODE_OPTIONS=--max-old-space-size=2048 \
     npm install -g --no-fund --no-audit "openclaw@${OPENCLAW_VERSION}"
 
 # CLI symlink for consistent access across users
@@ -363,6 +357,8 @@ RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 
+# Force pnpm for package operations (Bun may fail on ARM/Synology architectures).
+ENV OPENCLAW_PREFER_PNPM=1
 ENV NODE_ENV=production
 
 ENTRYPOINT ["entrypoint.sh"]
@@ -393,6 +389,11 @@ ENV_FILE="$ROOT_DIR/.env.openclaw"
 HOST_CONFIG_DIR="$ROOT_DIR/data/config"
 HOST_WORKSPACE_DIR="$ROOT_DIR/data/workspace"
 
+# Derive image/network names from compose project (directory name).
+COMPOSE_PROJECT="$(basename "$ROOT_DIR")"
+GATEWAY_IMAGE="${COMPOSE_PROJECT}-openclaw-gateway"
+NETWORK="${COMPOSE_PROJECT}_openclaw-internal"
+
 fail() {
   echo "ERROR: $*" >&2
   exit 1
@@ -403,6 +404,35 @@ require_cmd() {
     echo "Missing dependency: $1" >&2
     exit 1
   fi
+}
+
+SKIP_ONBOARDING=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-onboarding)
+      SKIP_ONBOARDING=true
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: ./setup.sh [--skip-onboarding]"
+      echo ""
+      echo "Options:"
+      echo "  --skip-onboarding  Skip interactive onboarding and reuse existing gateway config."
+      echo "  -h, --help         Show this help message."
+      exit 0
+      ;;
+    *)
+      fail "Unknown argument: $1"
+      ;;
+  esac
+done
+
+# Run an openclaw command against the gateway config (pre-start, local ops).
+# Uses compose to inherit volumes/env from the gateway service definition.
+# --entrypoint skips the iptables entrypoint; --no-deps skips starting envoy.
+gw_config() {
+  docker compose -f "$COMPOSE_FILE" run --rm --no-deps openclaw-gateway openclaw "$@"
 }
 
 # Read gateway token from existing openclaw config if available.
@@ -472,6 +502,25 @@ upsert_env() {
   mv "$tmp" "$file"
 }
 
+ensure_control_ui_allowed_origins() {
+  local allowed_origin_json=%s
+
+  local current
+  current="$(
+    gw_config config get gateway.controlUi.allowedOrigins 2>/dev/null || true
+  )"
+  current="${current//$'\r'/}"
+
+  if [[ -n "$current" && "$current" != "null" && "$current" != "[]" ]]; then
+    echo "Control UI allowlist already configured; leaving gateway.controlUi.allowedOrigins unchanged."
+    return 0
+  fi
+
+  gw_config config set gateway.controlUi.allowedOrigins \
+    "$allowed_origin_json" --strict-json >/dev/null
+  echo "Set gateway.controlUi.allowedOrigins to $allowed_origin_json"
+}
+
 require_cmd docker
 if ! docker compose version >/dev/null 2>&1; then
   fail "Docker Compose not available (try: docker compose version)"
@@ -486,83 +535,63 @@ export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-%s}"
 export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
 export OPENCLAW_GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-lan}"
 
-# Gateway token: reuse from config, env, or generate new.
-if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
-  EXISTING_TOKEN="$(read_config_gateway_token || true)"
-  if [[ -n "$EXISTING_TOKEN" ]]; then
-    OPENCLAW_GATEWAY_TOKEN="$EXISTING_TOKEN"
-    echo "Reusing gateway token from $HOST_CONFIG_DIR/openclaw.json"
-  elif command -v openssl >/dev/null 2>&1; then
-    OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
-  else
-    OPENCLAW_GATEWAY_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
-  fi
-fi
-export OPENCLAW_GATEWAY_TOKEN
-
-# Update .env file with runtime values (token, port, bind).
+# Update .env file with runtime values (port, bind).
+# Token is written after onboard (see below).
 upsert_env "$ENV_FILE" \
   OPENCLAW_GATEWAY_PORT \
   OPENCLAW_BRIDGE_PORT \
-  OPENCLAW_GATEWAY_BIND \
-  OPENCLAW_GATEWAY_TOKEN
-
-ensure_control_ui_allowed_origins() {
-  local allowed_origin_json=%s
-
-  local current
-  current="$(
-    docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
-      config get gateway.controlUi.allowedOrigins 2>/dev/null || true
-  )"
-  current="${current//$'\r'/}"
-
-  if [[ -n "$current" && "$current" != "null" && "$current" != "[]" ]]; then
-    echo "Control UI allowlist already configured; leaving gateway.controlUi.allowedOrigins unchanged."
-    return 0
-  fi
-
-  docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
-    config set gateway.controlUi.allowedOrigins \
-    "$allowed_origin_json" --strict-json >/dev/null
-  echo "Set gateway.controlUi.allowedOrigins to $allowed_origin_json"
-}
+  OPENCLAW_GATEWAY_BIND
 
 echo "==> Building images"
 docker compose -f "$COMPOSE_FILE" build
 
-echo ""
-echo "==> Onboarding (interactive)"
-echo "When prompted:"
-echo "  - Gateway bind: lan"
-echo "  - Gateway auth: token"
-echo "  - Gateway token: $OPENCLAW_GATEWAY_TOKEN"
-echo "  - Tailscale exposure: Off"
-echo "  - Install Gateway daemon: No"
-echo ""
-docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli onboard --no-install-daemon
+if [[ "$SKIP_ONBOARDING" == "true" ]]; then
+  echo ""
+  echo "==> Skipping onboarding (--skip-onboarding)"
+  echo "Reusing existing gateway config from $HOST_CONFIG_DIR/openclaw.json if available."
+else
+  echo ""
+  echo "==> Onboarding (interactive)"
+  echo "When prompted:"
+  echo "  - Gateway bind: lan"
+  echo "  - Gateway auth: token"
+  echo "  - Tailscale exposure: Off"
+  echo "  - Install Gateway daemon: No"
+  echo ""
+  # Start envoy (dependency) so DNS works, then run onboard.
+  docker compose -f "$COMPOSE_FILE" run --rm openclaw-gateway openclaw onboard --no-install-daemon
+fi
 
-echo ""
-echo "==> Setting gateway auth token"
-docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
-  config set gateway.auth.mode token >/dev/null
-docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
-  config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null
-echo "Gateway token set (matches .env.openclaw)."
+# Ensure gateway mode is local (required for gateway to start).
+# Onboard should set this, but we enforce it as a safety net.
+gw_config config set gateway.mode local >/dev/null
 
+# Read the token that onboard set, or generate one if onboard didn't.
 echo ""
-echo "==> Disable device auth (not compatible with reverse proxy)"
-# Control UI always uses device pairing even behind a trusted proxy.
-# See: https://github.com/openclaw/openclaw/issues/25293
-#      https://github.com/openclaw/openclaw/issues/4941
-docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
-  config set gateway.controlUi.dangerouslyDisableDeviceAuth true >/dev/null
-echo "Device auth disabled (token auth + TLS via Envoy is the security boundary)."
+echo "==> Gateway auth token"
+OPENCLAW_GATEWAY_TOKEN="$(read_config_gateway_token || true)"
+if [[ -z "$OPENCLAW_GATEWAY_TOKEN" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
+  else
+    OPENCLAW_GATEWAY_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  fi
+  gw_config config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null
+  echo "Generated new gateway token."
+else
+  echo "Using token from onboarding."
+fi
+export OPENCLAW_GATEWAY_TOKEN
+
+# Ensure auth mode is token.
+gw_config config set gateway.auth.mode token >/dev/null
+
+# Write token to .env file so it's available on restarts.
+upsert_env "$ENV_FILE" OPENCLAW_GATEWAY_TOKEN
 
 echo ""
 echo "==> Trusted proxies (Docker network CIDRs)"
-docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
-  config set gateway.trustedProxies \
+gw_config config set gateway.trustedProxies \
   '["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16"]' --strict-json >/dev/null
 echo "Set gateway.trustedProxies for Docker network forwarding."
 
@@ -571,18 +600,53 @@ echo "==> Control UI origin allowlist"
 ensure_control_ui_allowed_origins
 
 echo ""
-echo "==> Provider setup (optional)"
-echo "WhatsApp (QR):"
-echo "  docker compose -f $COMPOSE_FILE run --rm openclaw-cli channels login"
-echo "Telegram (bot token):"
-echo "  docker compose -f $COMPOSE_FILE run --rm openclaw-cli channels add --channel telegram --token <token>"
-echo "Discord (bot token):"
-echo "  docker compose -f $COMPOSE_FILE run --rm openclaw-cli channels add --channel discord --token <token>"
-echo "Docs: https://docs.openclaw.ai/channels"
+echo "==> Disable mDNS discovery (not useful in Docker)"
+gw_config config set discovery.mdns.mode off >/dev/null
+
+echo ""
+echo "==> CLI remote config"
+# The CLI runs as a standalone docker run container, connecting to the gateway
+# through Envoy's TLS ingress (wss://envoy:443). Config and device identity
+# persist on the openclaw-cli-config named volume.
+"$ROOT_DIR/openclaw" config set gateway.mode remote >/dev/null
+"$ROOT_DIR/openclaw" config set gateway.remote.url "wss://envoy:443" >/dev/null
+"$ROOT_DIR/openclaw" config set gateway.remote.transport direct >/dev/null
+"$ROOT_DIR/openclaw" config set gateway.remote.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null
+"$ROOT_DIR/openclaw" config set discovery.mdns.mode off >/dev/null
+echo "CLI configured for remote access via Envoy."
 
 echo ""
 echo "==> Starting services"
 docker compose -f "$COMPOSE_FILE" up -d
+
+# Wait for gateway to accept connections.
+echo "Waiting for gateway..."
+for i in $(seq 1 30); do
+  if docker compose -f "$COMPOSE_FILE" exec -T openclaw-gateway \
+    openclaw devices list >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+echo ""
+echo "==> Pair CLI device"
+# Trigger pairing — the CLI connects, gets rejected, but its device identity
+# is written to the named volume. Then we approve from the gateway.
+"$ROOT_DIR/openclaw" devices list >/dev/null 2>&1 || true
+sleep 2
+docker compose -f "$COMPOSE_FILE" exec -T openclaw-gateway \
+  openclaw devices approve --latest 2>&1 || true
+
+echo ""
+echo "==> Provider setup (optional)"
+echo "WhatsApp (QR):"
+echo "  $ROOT_DIR/openclaw channels login"
+echo "Telegram (bot token):"
+echo "  $ROOT_DIR/openclaw channels add --channel telegram --token <token>"
+echo "Discord (bot token):"
+echo "  $ROOT_DIR/openclaw channels add --channel discord --token <token>"
+echo "Docs: https://docs.openclaw.ai/channels"
 
 echo ""
 echo "Gateway running."
@@ -595,11 +659,11 @@ echo "Token:     $OPENCLAW_GATEWAY_TOKEN"
 echo ""
 echo "Commands:"
 echo "  docker compose -f $COMPOSE_FILE logs -f openclaw-gateway"
-echo "  docker compose -f $COMPOSE_FILE run --rm openclaw-cli config get gateway"
+echo "  $ROOT_DIR/openclaw devices list"
 echo ""
 echo "Envoy config:   $ROOT_DIR/compose/envoy/envoy.yaml"
 echo "Gateway config: $HOST_CONFIG_DIR/openclaw.json"
-`, gatewayPort, originJSON)
+`, originJSON, gatewayPort)
 }
 
 func envoyConfigContent(opts Options) (string, error) {
@@ -611,13 +675,20 @@ func envoyConfigContent(opts Options) (string, error) {
 	// Build the domain list for the egress whitelist.
 	// These domains are always included regardless of --allowed-domains.
 	alwaysAllowed := []string{
+		// Infrastructure.
 		"clawhub.com",
 		"registry.npmjs.org",
+		// AI providers.
 		"api.anthropic.com",
 		"api.openai.com",
 		"generativelanguage.googleapis.com",
 		"openrouter.ai",
 		"api.x.ai",
+		// Homebrew (Linuxbrew).
+		"github.com",
+		"*.githubusercontent.com",
+		"ghcr.io",
+		"formulae.brew.sh",
 	}
 
 	// Deduplicate: start with always-allowed, then add user-specified domains.
@@ -841,12 +912,13 @@ func entrypointContent() string {
 	return `#!/bin/bash
 # Generated by openclaw-docker. Runs as root to set iptables, then drops to node.
 #
-# Security model: iptables DNAT transparently redirects ALL outbound TCP from
-# this container to Envoy's transparent proxy listener. Applications are unaware
-# of the proxy — they connect normally and iptables rewrites the destination.
-# Envoy inspects TLS SNI to enforce the domain whitelist; non-whitelisted or
-# non-TLS traffic is refused. The FILTER table OUTPUT DROP policy provides
-# defense-in-depth: even if NAT were bypassed, only Envoy is reachable.
+# Security model: iptables DNAT transparently redirects outbound TCP destined
+# for the outside world to Envoy's transparent proxy listener. Internal subnet
+# traffic (Docker service discovery, container-to-container) passes through
+# directly. Envoy inspects TLS SNI to enforce the domain whitelist; non-whitelisted
+# or non-TLS external traffic is refused. The FILTER table OUTPUT DROP policy
+# provides defense-in-depth: only loopback, Docker DNS, the internal subnet,
+# and Envoy (via DNAT) are reachable.
 # The node user cannot modify these rules (requires CAP_NET_ADMIN, root only).
 set -euo pipefail
 
@@ -856,6 +928,9 @@ if [ -z "$ENVOY_IP" ]; then
   echo "ERROR: cannot resolve 'envoy' — is the envoy service running?" >&2
   exit 1
 fi
+
+# Derive the internal subnet (/24 matches compose IPAM config).
+INTERNAL_SUBNET="${ENVOY_IP%.*}.0/24"
 
 # Add a default route via Envoy. The internal network has no gateway (internal: true),
 # so the kernel rejects connections to external IPs with "Network is unreachable" before
@@ -873,8 +948,10 @@ iptables -t nat -F OUTPUT 2>/dev/null || true
 iptables -t nat -A OUTPUT -j DOCKER_OUTPUT 2>/dev/null || true
 
 # === NAT table: transparent redirect ===
-# Skip DNAT for traffic already destined for Envoy (avoids redirect loop).
-iptables -t nat -A OUTPUT -p tcp -d "$ENVOY_IP" -j RETURN
+# Skip DNAT for loopback (gateway health checks, local services).
+iptables -t nat -A OUTPUT -o lo -j RETURN
+# Skip DNAT for internal subnet (container-to-container, Docker service discovery).
+iptables -t nat -A OUTPUT -p tcp -d "$INTERNAL_SUBNET" -j RETURN
 # Redirect all other outbound TCP to Envoy's transparent proxy listener.
 iptables -t nat -A OUTPUT -p tcp -j DNAT --to-destination "$ENVOY_IP":10000
 
@@ -891,8 +968,8 @@ iptables -A OUTPUT -d 127.0.0.11/32 -p udp --dport 53 -j ACCEPT
 # Allow established/related connections (responses to allowed requests).
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-# Allow traffic to Envoy (DNAT'd packets arrive here with Envoy as destination).
-iptables -A OUTPUT -d "$ENVOY_IP" -j ACCEPT
+# Allow internal network (container-to-container, service discovery, Envoy).
+iptables -A OUTPUT -d "$INTERNAL_SUBNET" -j ACCEPT
 
 # Log and drop everything else (helps debug blocked connections).
 iptables -A OUTPUT -j LOG --log-prefix "OPENCLAW-BLOCKED: " --log-level warning 2>/dev/null || true
@@ -921,8 +998,30 @@ func writeEntrypoint(opts Options) error {
 func cliWrapperContent() string {
 	return `#!/usr/bin/env bash
 set -euo pipefail
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec docker compose -f "$ROOT_DIR/compose.yaml" run --rm openclaw-cli "$@"
+COMPOSE_PROJECT="$(basename "$ROOT_DIR")"
+GATEWAY_IMAGE="${COMPOSE_PROJECT}-openclaw-gateway"
+NETWORK="${COMPOSE_PROJECT}_openclaw-egress"
+
+# Run CLI as a remote client, connecting to the gateway via Envoy TLS ingress.
+# Uses its own config directory (separate from the gateway config).
+ARGS=(
+  docker run --rm
+  --network "$NETWORK"
+  -v "$ROOT_DIR/data/cli-config:/home/node/.openclaw"
+  -v "$ROOT_DIR/compose/envoy/server-cert.pem:/etc/ssl/certs/openclaw-ca.pem:ro"
+  -e HOME=/home/node
+  -e NODE_EXTRA_CA_CERTS=/etc/ssl/certs/openclaw-ca.pem
+  --entrypoint openclaw
+)
+
+# Attach terminal if stdin is a TTY.
+if [ -t 0 ]; then
+  ARGS+=(-it)
+fi
+
+exec "${ARGS[@]}" "$GATEWAY_IMAGE" "$@"
 `
 }
 
