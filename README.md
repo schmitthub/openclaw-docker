@@ -8,6 +8,8 @@
 
 CLI that generates a hardened Docker Compose stack for [OpenClaw](https://openclaw.ai) with network-level egress isolation via Envoy proxy.
 
+> This is in early development - I will be adding features and fixing bugs to serve my own needs as I experiment with OpenClaw. And claude boy generated a lot of the docs so they might be hallucinated slightly. But contributions and feedback are welcome!
+
 ## Install
 
 **Homebrew:**
@@ -34,17 +36,27 @@ go build -o openclaw-docker .
 
 ## Table of Contents
 
-- [Install](#install)
-- [Architecture](#architecture)
-- [Threat Model](#threat-model)
-- [Quickstart](#quickstart)
-- [Server Deployment](#server-deployment)
-- [Common Operations](#common-operations)
-- [Egress Domain Whitelist](#egress-domain-whitelist)
-- [CLI Flags](#cli-flags)
-- [Known Issues](#known-issues)
-- [Development](#development)
-- [Repository Structure](#repository-structure)
+- [openclaw-docker](#openclaw-docker)
+  - [Install](#install)
+  - [Table of Contents](#table-of-contents)
+  - [Architecture](#architecture)
+  - [Threat Model](#threat-model)
+  - [Quickstart](#quickstart)
+    - [Prerequisites](#prerequisites)
+    - [1. Generate deployment artifacts](#1-generate-deployment-artifacts)
+    - [2. Run setup](#2-run-setup)
+    - [3. Open the dashboard](#3-open-the-dashboard)
+  - [Server Deployment](#server-deployment)
+    - [1. Generate with `--external-origin`](#1-generate-with---external-origin)
+    - [2. Point your reverse proxy at port 443](#2-point-your-reverse-proxy-at-port-443)
+    - [3. Lock down the origin with mTLS (Cloudflare Authenticated Origin Pulls)](#3-lock-down-the-origin-with-mtls-cloudflare-authenticated-origin-pulls)
+  - [Common Operations](#common-operations)
+  - [Egress Domain Whitelist](#egress-domain-whitelist)
+  - [CLI Flags](#cli-flags)
+  - [Known Issues](#known-issues)
+    - [Device auth behind reverse proxy](#device-auth-behind-reverse-proxy)
+  - [Development](#development)
+  - [Repository Structure](#repository-structure)
 
 ## Architecture
 
