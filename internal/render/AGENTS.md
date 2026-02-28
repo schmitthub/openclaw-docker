@@ -16,7 +16,6 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 | `writeSetupScript(opts)` | Writes setup.sh with 0755 perms |
 | `writeEntrypoint(opts)` | Writes entrypoint.sh with 0755 perms |
 | `envoyConfigContent(opts)` | envoy.yaml with ingress + egress listeners |
-| `openClawJSONContent(opts)` | openclaw.json with gateway config |
 | `generateTLSCert(opts)` | Self-signed TLS cert for Envoy ingress (in `ca.go`) |
 
 ## Options Struct
@@ -52,10 +51,9 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 │   │   └── server-key.pem      # 0600, TLS key
 │   └── openclaw/
 │       ├── Dockerfile           # 0644, node:22-bookworm + iptables + gosu
-│       ├── entrypoint.sh        # 0755, iptables setup + drop to node
-│       └── openclaw.json        # 0644, pre-seeded gateway config
-├── compose.yaml                 # 0644, envoy + gateway
+│       └── entrypoint.sh        # 0755, iptables setup + drop to node
+├── compose.yaml                 # 0644, envoy + gateway + cli
 ├── .env.openclaw                # 0644, runtime env vars + proxy config
-├── setup.sh                     # 0755, token gen + compose up
+├── setup.sh                     # 0755, token gen, onboarding, compose up
 └── manifest.json                # 0644, resolved version metadata
 ```

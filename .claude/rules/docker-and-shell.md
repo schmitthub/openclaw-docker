@@ -12,7 +12,7 @@ The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized 
 |------|-------------|---------|
 | `compose.yaml` | 0644 | Envoy + gateway services on internal network |
 | `.env.openclaw` | 0644 | Runtime env vars including proxy config |
-| `setup.sh` | 0755 | Token gen, openclaw.json seeding, compose up orchestration |
+| `setup.sh` | 0755 | Token gen, onboarding, config management, compose up |
 | `manifest.json` | 0644 | Resolved version metadata |
 
 **`compose/openclaw/`:**
@@ -20,7 +20,6 @@ The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized 
 |------|-------------|---------|
 | `Dockerfile` | 0644 | `node:22-bookworm` with `iptables` + `gosu` for egress lockdown |
 | `entrypoint.sh` | 0755 | Root-owned: sets iptables rules, then drops to `node` via `gosu` |
-| `openclaw.json` | 0644 | Pre-seeded gateway config (token placeholder replaced by setup.sh) |
 
 **`compose/envoy/`:**
 | File | Permissions | Purpose |
@@ -88,7 +87,6 @@ Generation lives in `internal/render/render.go` and `internal/render/ca.go`:
 - `openClawEnvFileContent(opts)` — env file via `fmt.Sprintf`
 - `setupScriptContent(opts)` — setup.sh via `fmt.Sprintf`
 - `envoyConfigContent(opts)` — envoy.yaml with ingress + egress listeners
-- `openClawJSONContent(opts)` — openclaw.json with gateway config
 - `generateTLSCert(opts)` — self-signed TLS cert generation (in `ca.go`, preserves existing across re-runs)
 
 ## Validation

@@ -54,7 +54,6 @@ func TestGenerateProducesAllFiles(t *testing.T) {
 	for _, name := range []string{
 		"compose/openclaw/Dockerfile",
 		"compose/openclaw/entrypoint.sh",
-		"compose/openclaw/openclaw.json",
 		"compose/envoy/envoy.yaml",
 		"compose/envoy/server-cert.pem",
 		"compose/envoy/server-key.pem",
@@ -234,7 +233,7 @@ func TestGenerateComposeContent(t *testing.T) {
 	}
 	body := string(content)
 
-	for _, svc := range []string{"envoy:", "openclaw-gateway:"} {
+	for _, svc := range []string{"envoy:", "openclaw-gateway:", "openclaw-cli:"} {
 		if !strings.Contains(body, svc) {
 			t.Errorf("compose.yaml missing service %q", svc)
 		}
@@ -263,6 +262,17 @@ func TestGenerateComposeContent(t *testing.T) {
 		"internal: true",
 		"cap_add:",
 		"NET_ADMIN",
+		// Gateway service additions.
+		"init: true",
+		"restart: unless-stopped",
+		"HOME: /home/node",
+		"TERM: xterm-256color",
+		`command: ["openclaw", "gateway", "--bind", "lan"`,
+		// CLI service.
+		`entrypoint: ["openclaw"]`,
+		"stdin_open: true",
+		"tty: true",
+		"BROWSER: echo",
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("compose.yaml missing expected content: %q", s)
@@ -358,14 +368,24 @@ func TestGenerateSetupScriptExecutable(t *testing.T) {
 		t.Error("setup.sh missing shebang")
 	}
 
-	for _, s := range []string{"docker compose", "build", "openssl rand", "OPENCLAW_GATEWAY_TOKEN"} {
+	for _, s := range []string{
+		"docker compose",
+		"build",
+		"openssl rand",
+		"OPENCLAW_GATEWAY_TOKEN",
+		"up -d",
+		// Onboarding (mirrors official docker-setup.sh).
+		"openclaw-cli onboard --no-install-daemon",
+		// Config management via CLI.
+		"ensure_control_ui_allowed_origins",
+		"controlUi.allowedOrigins",
+		"gateway.trustedProxies",
+		// Device identity directory.
+		"identity",
+	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("setup.sh missing expected content: %q", s)
 		}
-	}
-
-	if !strings.Contains(body, "up -d") {
-		t.Error("setup.sh should start services")
 	}
 }
 
@@ -459,7 +479,6 @@ func TestGenerateFullPipeline(t *testing.T) {
 	for _, name := range []string{
 		"compose/openclaw/Dockerfile",
 		"compose/openclaw/entrypoint.sh",
-		"compose/openclaw/openclaw.json",
 		"compose/envoy/envoy.yaml",
 		"compose/envoy/server-cert.pem",
 		"compose/envoy/server-key.pem",
@@ -518,12 +537,14 @@ func TestGenerateEnvoyConfigContent(t *testing.T) {
 		"websocket",
 		"CONNECT",
 		"Forbidden",
-		"openclaw.ai:443",
+		"clawhub.com:443",
 		"api.anthropic.com:443",
 		"api.openai.com:443",
 		"generativelanguage.googleapis.com:443",
 		"openrouter.ai:443",
 		"api.x.ai:443",
+		"use_remote_address: true",
+		"xff_num_trusted_hops: 0",
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("envoy.yaml missing expected content: %q", s)
@@ -554,49 +575,9 @@ func TestGenerateEnvoyAllowedDomains(t *testing.T) {
 	}
 	body := string(content)
 
-	for _, domain := range []string{"api.anthropic.com:443", "custom.example.com:443", "openclaw.ai:443"} {
+	for _, domain := range []string{"api.anthropic.com:443", "custom.example.com:443", "clawhub.com:443"} {
 		if !strings.Contains(body, domain) {
 			t.Errorf("envoy.yaml missing allowed domain: %q", domain)
-		}
-	}
-}
-
-func TestGenerateOpenClawJSONContent(t *testing.T) {
-	h := &harness.Harness{T: t}
-	setup := h.NewIsolatedFS()
-
-	seedManifest(t, setup.BaseDir)
-	outputDir := filepath.Join(setup.BaseDir, "deploy")
-
-	result := h.Run(
-		"generate",
-		"--dangerous-inline",
-		"--output", outputDir,
-	)
-	if result.Err != nil {
-		t.Fatalf("generate failed: %v", result.Err)
-	}
-
-	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "openclaw", "openclaw.json"))
-	if err != nil {
-		t.Fatalf("read openclaw.json: %v", err)
-	}
-	body := string(content)
-
-	for _, s := range []string{
-		`"gateway"`,
-		`"mode"`,
-		`"local"`,
-		`"bind"`,
-		`"auth"`,
-		`"token"`,
-		"__GATEWAY_TOKEN__",
-		`"controlUi"`,
-		`"allowedOrigins"`,
-		`"https://localhost"`,
-	} {
-		if !strings.Contains(body, s) {
-			t.Errorf("openclaw.json missing expected content: %q", s)
 		}
 	}
 }

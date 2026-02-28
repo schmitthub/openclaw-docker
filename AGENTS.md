@@ -30,12 +30,11 @@ Primary goals:
 │   │   └── server-key.pem      # TLS key for ingress
 │   └── openclaw/
 │       ├── Dockerfile           # node:22-bookworm with iptables + gosu
-│       ├── entrypoint.sh        # Root-owned iptables setup, drops to node user
-│       └── openclaw.json        # Pre-seeded gateway config (token placeholder)
-├── compose.yaml                 # Docker Compose with envoy + gateway
+│       └── entrypoint.sh        # Root-owned iptables setup, drops to node user
+├── compose.yaml                 # Docker Compose with envoy + gateway + cli
 ├── .env.openclaw                # Environment variables for compose
 ├── manifest.json                # Resolved version metadata
-└── setup.sh                     # Token gen, config seeding, compose up
+└── setup.sh                     # Token gen, onboarding, compose up
 ```
 
 ## Contribution Guidelines for Agents
