@@ -25,7 +25,6 @@ type runtimeOptions struct {
 	OpenClawGatewayPort  string
 	OpenClawBridgePort   string
 	OpenClawGatewayBind  string
-	OpenClawImage        string
 	OpenClawGatewayToken string
 	AllowedDomains       string
 	ExternalOrigin       string
@@ -78,7 +77,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		OpenClawGatewayPort:  "18789",
 		OpenClawBridgePort:   "18790",
 		OpenClawGatewayBind:  "lan",
-		OpenClawImage:        "openclaw:local",
 		OpenClawGatewayToken: "",
 		AllowedDomains:       "",
 		ExternalOrigin:       "",
@@ -119,9 +117,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		}
 		if fileCfg.OpenClawGatewayBind != "" {
 			merged.OpenClawGatewayBind = fileCfg.OpenClawGatewayBind
-		}
-		if fileCfg.OpenClawImage != "" {
-			merged.OpenClawImage = fileCfg.OpenClawImage
 		}
 		if fileCfg.OpenClawGatewayToken != "" {
 			merged.OpenClawGatewayToken = fileCfg.OpenClawGatewayToken
@@ -168,9 +163,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	if cmd.Flags().Changed("openclaw-gateway-bind") {
 		merged.OpenClawGatewayBind = rootOpts.OpenClawGatewayBind
 	}
-	if cmd.Flags().Changed("openclaw-image") {
-		merged.OpenClawImage = rootOpts.OpenClawImage
-	}
 	if cmd.Flags().Changed("openclaw-gateway-token") {
 		merged.OpenClawGatewayToken = rootOpts.OpenClawGatewayToken
 	}
@@ -192,7 +184,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	merged.OpenClawGatewayPort = strings.TrimSpace(merged.OpenClawGatewayPort)
 	merged.OpenClawBridgePort = strings.TrimSpace(merged.OpenClawBridgePort)
 	merged.OpenClawGatewayBind = strings.TrimSpace(merged.OpenClawGatewayBind)
-	merged.OpenClawImage = strings.TrimSpace(merged.OpenClawImage)
 	merged.OpenClawGatewayToken = strings.TrimSpace(merged.OpenClawGatewayToken)
 	merged.AllowedDomains = strings.TrimSpace(merged.AllowedDomains)
 	merged.ExternalOrigin = strings.TrimSpace(merged.ExternalOrigin)
@@ -228,9 +219,6 @@ func applyEnvOverrides(opts *runtimeOptions) error {
 	}
 	if value, ok := getenvTrim("OPENCLAW_DOCKER_OPENCLAW_GATEWAY_BIND"); ok {
 		opts.OpenClawGatewayBind = value
-	}
-	if value, ok := getenvTrim("OPENCLAW_DOCKER_OPENCLAW_IMAGE"); ok {
-		opts.OpenClawImage = value
 	}
 	if value, ok := getenvTrim("OPENCLAW_DOCKER_OPENCLAW_GATEWAY_TOKEN"); ok {
 		opts.OpenClawGatewayToken = value

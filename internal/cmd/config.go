@@ -51,7 +51,7 @@ func newConfigInitCmd() *cobra.Command {
 				return fmt.Errorf("write config template: %w", err)
 			}
 
-			fmt.Printf("Wrote config template: %s\n", target)
+			fmt.Fprintf(cmd.OutOrStdout(), "Wrote config template: %s\n", target)
 			return nil
 		},
 	}

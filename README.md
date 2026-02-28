@@ -8,6 +8,44 @@
 
 CLI that generates a hardened Docker Compose stack for [OpenClaw](https://openclaw.ai) with network-level egress isolation via Envoy proxy.
 
+## Install
+
+**Homebrew:**
+
+```bash
+brew install schmitthub/tap/openclaw-docker
+```
+
+**Install script (Linux / macOS):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash
+```
+
+Options: `--global` (install to `/usr/local/bin`), `--local` (default, `~/.local/bin`), `--install-dir <dir>`, `--version <tag>`.
+
+**From source:**
+
+```bash
+git clone https://github.com/schmitthub/openclaw-docker.git
+cd openclaw-docker
+go build -o openclaw-docker .
+```
+
+## Table of Contents
+
+- [Install](#install)
+- [Architecture](#architecture)
+- [Threat Model](#threat-model)
+- [Quickstart](#quickstart)
+- [Server Deployment](#server-deployment)
+- [Common Operations](#common-operations)
+- [Egress Domain Whitelist](#egress-domain-whitelist)
+- [CLI Flags](#cli-flags)
+- [Known Issues](#known-issues)
+- [Development](#development)
+- [Repository Structure](#repository-structure)
+
 ## Architecture
 
 ```
@@ -101,24 +139,9 @@ CLI that generates a hardened Docker Compose stack for [OpenClaw](https://opencl
 
 ### Prerequisites
 
-- [Go 1.25+](https://go.dev/dl/) (to build the CLI)
 - [Docker](https://docs.docker.com/get-docker/) with `docker compose` v2
 
-### 1. Build the CLI
-
-```bash
-git clone https://github.com/schmitthub/openclaw-docker.git
-cd openclaw-docker
-go build -o openclaw-docker .
-```
-
-Or install directly:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash
-```
-
-### 2. Generate deployment artifacts
+### 1. Generate deployment artifacts
 
 ```bash
 openclaw-docker generate \
@@ -146,7 +169,7 @@ openclaw-deploy/
 └── manifest.json                # Resolved version metadata
 ```
 
-### 3. Run setup
+### 2. Run setup
 
 ```bash
 cd openclaw-deploy
@@ -166,7 +189,7 @@ cd openclaw-deploy
 9. Sets Control UI allowed origins (`https://localhost`)
 10. Starts services (`docker compose up -d`)
 
-### 4. Open the dashboard
+### 3. Open the dashboard
 
 The setup script prints the URL at the end:
 
@@ -175,6 +198,47 @@ https://localhost/?token=<your-token>
 ```
 
 Accept the self-signed certificate warning in your browser.
+
+## Server Deployment
+
+To expose OpenClaw on a public server behind a domain (e.g. `https://myclaw.example.com`):
+
+### 1. Generate with `--external-origin`
+
+```bash
+openclaw-docker generate \
+  --openclaw-version latest \
+  --output ./openclaw-deploy \
+  --external-origin "https://myclaw.example.com" \
+  --dangerous-inline
+```
+
+This adds your domain to the Control UI's `allowedOrigins` list alongside `https://localhost`.
+
+### 2. Point your reverse proxy at port 443
+
+Envoy terminates TLS on port 443. Your edge proxy (Cloudflare, nginx, Caddy) should forward traffic to this port.
+
+### 3. Lock down the origin with mTLS (Cloudflare Authenticated Origin Pulls)
+
+The generated `compose/envoy/envoy.yaml` includes commented-out mTLS configuration. To enable it:
+
+1. Download the [Cloudflare origin pull CA certificate](https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/)
+2. Save it as `compose/envoy/cloudflare-origin-pull-ca.pem`
+3. Mount it in `compose.yaml` under the `envoy` service volumes:
+   ```yaml
+   - ./compose/envoy/cloudflare-origin-pull-ca.pem:/etc/envoy/certs/client-ca.pem:ro
+   ```
+4. Uncomment the mTLS lines in `compose/envoy/envoy.yaml`:
+   ```yaml
+   validation_context:
+     trusted_ca:
+       filename: /etc/envoy/certs/client-ca.pem
+   require_client_certificate: true
+   ```
+5. Restart Envoy: `docker compose restart envoy`
+
+With mTLS enabled, only requests presenting a valid Cloudflare client certificate are accepted. Direct connections to the origin IP are rejected.
 
 ## Common Operations
 
@@ -241,7 +305,7 @@ To edit the whitelist after generation, modify `compose/envoy/envoy.yaml` direct
 | `--openclaw-version` | `latest` | OpenClaw version (dist-tag or semver partial) |
 | `--output`, `-o` | `./openclaw-deploy` | Output directory |
 | `--allowed-domains` | AI providers | Comma-separated egress whitelist (additive) |
-| `--external-origin` | `""` | External origin for server deployments |
+| `--external-origin` | `""` | External origin for server deployments (e.g. `https://myclaw.example.com`) |
 | `--docker-apt-packages` | `""` | Extra apt packages for Dockerfile |
 | `--openclaw-gateway-port` | `18789` | Gateway port |
 | `--openclaw-gateway-bind` | `lan` | Gateway bind address |

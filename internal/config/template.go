@@ -34,11 +34,11 @@ openclaw_bridge_port: "18790"
 openclaw_gateway_bind: lan
 
 # Defaults used by generated compose/.env.openclaw
-openclaw_image: openclaw:local
 openclaw_gateway_token: ""
 
 # Comma-separated domains to whitelist in the Envoy egress proxy.
-# openclaw.ai is always included. Set to "" to allow only openclaw.ai.
+# Infrastructure (clawhub.com, registry.npmjs.org) and AI providers are always
+# included. Set to "" to allow only those hardcoded domains.
 allowed_domains: "api.anthropic.com,api.openai.com,generativelanguage.googleapis.com,openrouter.ai,api.x.ai"
 
 # External origin for server deployments (e.g. https://myclaw.example.com).

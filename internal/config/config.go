@@ -18,7 +18,6 @@ type FileConfig struct {
 	OpenClawGatewayPort  string `yaml:"openclaw_gateway_port"`
 	OpenClawBridgePort   string `yaml:"openclaw_bridge_port"`
 	OpenClawGatewayBind  string `yaml:"openclaw_gateway_bind"`
-	OpenClawImage        string `yaml:"openclaw_image"`
 	OpenClawGatewayToken string `yaml:"openclaw_gateway_token"`
 	AllowedDomains       string `yaml:"allowed_domains"`
 	ExternalOrigin       string `yaml:"external_origin"`

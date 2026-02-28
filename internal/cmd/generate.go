@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +27,6 @@ func newGenerateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&rootOpts.OpenClawGatewayPort, "openclaw-gateway-port", "", "Default OPENCLAW_GATEWAY_PORT value baked into generated Dockerfile")
 	cmd.Flags().StringVar(&rootOpts.OpenClawBridgePort, "openclaw-bridge-port", "", "Default OPENCLAW_BRIDGE_PORT value baked into generated Dockerfile")
 	cmd.Flags().StringVar(&rootOpts.OpenClawGatewayBind, "openclaw-gateway-bind", "", "Default OPENCLAW_GATEWAY_BIND value baked into generated Dockerfile")
-	cmd.Flags().StringVar(&rootOpts.OpenClawImage, "openclaw-image", "", "Default OPENCLAW_IMAGE value used in generated compose/.env.openclaw")
 	cmd.Flags().StringVar(&rootOpts.OpenClawGatewayToken, "openclaw-gateway-token", "", "Default OPENCLAW_GATEWAY_TOKEN value used in generated compose/.env.openclaw")
 	cmd.Flags().StringVar(&rootOpts.AllowedDomains, "allowed-domains", "", "Comma-separated domains to whitelist in egress proxy")
 	cmd.Flags().StringVar(&rootOpts.ExternalOrigin, "external-origin", "", "External origin for server deployments (e.g. https://myclaw.example.com)")
@@ -52,7 +50,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	} else {
-		meta, err = versions.Resolve(context.Background(), versions.ResolveOptions{
+		meta, err = versions.Resolve(cmd.Context(), versions.ResolveOptions{
 			Requested: opts.Version,
 			Debug:     opts.Debug,
 		})
@@ -78,7 +76,6 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		OpenClawGatewayPort:  opts.OpenClawGatewayPort,
 		OpenClawBridgePort:   opts.OpenClawBridgePort,
 		OpenClawGatewayBind:  opts.OpenClawGatewayBind,
-		OpenClawImage:        opts.OpenClawImage,
 		OpenClawGatewayToken: opts.OpenClawGatewayToken,
 		AllowedDomains:       opts.AllowedDomains,
 		ExternalOrigin:       opts.ExternalOrigin,
@@ -89,6 +86,6 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Printf("Generated deployment artifacts in %s\n", opts.OutputDir)
+	fmt.Fprintf(cmd.OutOrStdout(), "Generated deployment artifacts in %s\n", opts.OutputDir)
 	return nil
 }

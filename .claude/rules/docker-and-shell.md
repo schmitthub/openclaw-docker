@@ -61,7 +61,7 @@ No `HTTP_PROXY`/`HTTPS_PROXY` env vars are needed — iptables DNAT handles all 
 - **3 services:** `envoy`, `openclaw-gateway`, `openclaw-cli`
 - Envoy (`envoyproxy/envoy:v1.33-latest`) is the sole ingress/egress proxy and DNS forwarder
 - Envoy has static IP `172.28.0.2` on `openclaw-internal` (IPAM subnet `172.28.0.0/24`)
-- Envoy runs as `user: "0"` (required for binding port 53)
+- Envoy runs as default non-root `envoy` user with `sysctls: [net.ipv4.ip_unprivileged_port_start=53]` for port 53 binding
 - Envoy publishes port 443 for ingress; egress listener on port 10000, DNS listener on port 53 UDP (internal only)
 - Gateway and CLI services use `dns: [172.28.0.2]` so Docker DNS forwards external queries to Envoy
 - Gateway builds from `compose/openclaw/` subdirectory

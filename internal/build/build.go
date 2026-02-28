@@ -10,7 +10,7 @@ import (
 // Defaults are used for development builds (go run / go build without flags).
 var (
 	Version = "DEV"
-	Date    = "" // YYYY-MM-DD, empty for dev builds
+	Date    = "" // RFC3339 timestamp (e.g. 2026-02-28T14:30:00Z), empty for dev builds
 )
 
 func init() {

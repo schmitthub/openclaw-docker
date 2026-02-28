@@ -75,8 +75,9 @@ if [[ -z "$INSTALL_DIR" ]]; then
 fi
 
 case "$(uname -s)" in
-  Linux) OS="linux" ;;
-  *) echo "This installer currently supports Linux only" >&2; exit 1 ;;
+  Linux)  OS="linux" ;;
+  Darwin) OS="darwin" ;;
+  *) echo "Unsupported OS: $(uname -s)" >&2; exit 1 ;;
 esac
 
 case "$(uname -m)" in
@@ -94,8 +95,12 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
-ARTIFACT="${BINARY_NAME}_${VERSION}_${OS}_${ARCH}.tar.gz"
-URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARTIFACT}"
+# GoReleaser uses {{ .Version }} (no leading "v") in archive names,
+# but tag_name (used in the download path) includes the "v" prefix.
+TAG="$VERSION"
+ARCHIVE_VERSION="${VERSION#v}"
+ARTIFACT="${BINARY_NAME}_${ARCHIVE_VERSION}_${OS}_${ARCH}.tar.gz"
+URL="https://github.com/${REPO}/releases/download/${TAG}/${ARTIFACT}"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT

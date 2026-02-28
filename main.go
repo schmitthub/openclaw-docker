@@ -34,25 +34,25 @@ func run() error {
 
 	statePath, stateErr := update.DefaultStatePath()
 	if stateErr != nil {
-		return fmt.Errorf("resolve update state path: %w", stateErr)
+		fmt.Fprintf(os.Stderr, "warning: update check: %v\n", stateErr)
+		return nil
 	}
 
 	result, checkErr := update.CheckForUpdate(ctx, statePath, buildVersion, "schmitthub/openclaw-docker")
 	if checkErr != nil {
-		return fmt.Errorf("check for update: %w", checkErr)
+		// Update check is best-effort; don't fail the CLI for transient errors.
+		return nil
 	}
 	if result == nil || !result.UpdateAvailable {
 		return nil
 	}
 
-	if _, err := fmt.Fprintf(
-		rootCmd.OutOrStdout(),
+	fmt.Fprintf(
+		os.Stderr,
 		"\nUpdate available: %s -> %s\nInstall with:\n  brew upgrade openclaw-docker\n  curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash\n\n",
 		result.CurrentVersion,
 		result.LatestVersion,
-	); err != nil {
-		return fmt.Errorf("print update message: %w", err)
-	}
+	)
 
 	return nil
 }

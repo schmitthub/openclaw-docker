@@ -32,12 +32,10 @@ archives:
       - LICENSE
       - README.md
 
-homebrew_casks:
+brews:
   - name: openclaw-docker
     ids:
       - default
-    binaries:
-      - openclaw-docker
     repository:
       owner: schmitthub
       name: homebrew-tap

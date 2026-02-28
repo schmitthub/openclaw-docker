@@ -31,5 +31,5 @@ globs: ["**/*.go"]
 - Config precedence: flags > env vars (`OPENCLAW_DOCKER_*`) > config file > defaults
 - `mergedOptions(cmd)` in `internal/cmd/root.go` resolves the full option set
 - Write safety: `confirmWrite()` prompts unless `--dangerous-inline` is set
-- No `ENTRYPOINT` in generated Dockerfile — just `CMD`
-- Generated Dockerfile uses `node` user from `node:22-bookworm` base
+- Generated Dockerfile uses `ENTRYPOINT ["entrypoint.sh"]` (root → iptables → gosu node) with `CMD` for default arguments
+- Generated Dockerfile uses `node:22-bookworm` base

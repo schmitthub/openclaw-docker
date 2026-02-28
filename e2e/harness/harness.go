@@ -9,8 +9,8 @@ import (
 )
 
 // Harness provides an isolated filesystem environment for integration tests.
-// It creates temp directories, sets XDG env vars, registers a project, and
-// optionally persists config.
+// It delegates to testenv for directory creation and env var setup, then
+// provides CLI execution via Run().
 type Harness struct {
 	T *testing.T
 }

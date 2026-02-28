@@ -36,7 +36,11 @@ type githubRelease struct {
 func DefaultStatePath() (string, error) {
 	cacheDir, err := os.UserCacheDir()
 	if err != nil || strings.TrimSpace(cacheDir) == "" {
-		cacheDir = ".cache"
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil || strings.TrimSpace(home) == "" {
+			return "", fmt.Errorf("cannot determine cache directory: %w", err)
+		}
+		cacheDir = filepath.Join(home, ".cache")
 	}
 
 	targetDir := filepath.Join(cacheDir, "openclaw-docker")
