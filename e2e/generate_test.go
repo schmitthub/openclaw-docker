@@ -22,39 +22,36 @@ const testManifest = `{
 }
 `
 
-// seedManifest writes a test manifest into the harness cache dir at the path
-// the CLI expects and returns the versions-file path.
-func seedManifest(t *testing.T, cacheDir string) string {
+// seedManifest writes a test manifest to a temp file and sets the
+// OPENCLAW_DOCKER_VERSIONS_FILE env var so generate reads it instead of
+// resolving from npm. Returns the manifest path.
+func seedManifest(t *testing.T, baseDir string) string {
 	t.Helper()
-	manifestDir := filepath.Join(cacheDir, "openclaw-docker")
-	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
-		t.Fatalf("seed manifest dir: %v", err)
-	}
-	path := filepath.Join(manifestDir, "versions.json")
+	path := filepath.Join(baseDir, "versions.json")
 	if err := os.WriteFile(path, []byte(testManifest), 0o644); err != nil {
 		t.Fatalf("seed manifest write: %v", err)
 	}
+	t.Setenv("OPENCLAW_DOCKER_VERSIONS_FILE", path)
 	return path
 }
 
-func TestRenderProducesAllFiles(t *testing.T) {
+func TestGenerateProducesAllFiles(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem", "nginx.conf", "nginx-cert.pem", "nginx-key.pem"} {
+	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem", "nginx.conf", "nginx-cert.pem", "nginx-key.pem", "versions.json"} {
 		path := filepath.Join(outputDir, name)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -67,21 +64,20 @@ func TestRenderProducesAllFiles(t *testing.T) {
 	}
 }
 
-func TestRenderFlatOutput(t *testing.T) {
+func TestGenerateFlatOutput(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	// Dockerfile must be at the output root, not nested.
@@ -101,21 +97,20 @@ func TestRenderFlatOutput(t *testing.T) {
 	}
 }
 
-func TestRenderDockerfileContent(t *testing.T) {
+func TestGenerateDockerfileContent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	content, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
@@ -154,22 +149,21 @@ func TestRenderDockerfileContent(t *testing.T) {
 	}
 }
 
-func TestRenderDockerfileAptPackages(t *testing.T) {
+func TestGenerateDockerfileAptPackages(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 		"--docker-apt-packages", "git-lfs ripgrep",
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	content, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
@@ -182,21 +176,20 @@ func TestRenderDockerfileAptPackages(t *testing.T) {
 	}
 }
 
-func TestRenderComposeContent(t *testing.T) {
+func TestGenerateComposeContent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	content, err := os.ReadFile(filepath.Join(outputDir, "compose.yaml"))
@@ -248,21 +241,20 @@ func TestRenderComposeContent(t *testing.T) {
 	}
 }
 
-func TestRenderEnvContent(t *testing.T) {
+func TestGenerateEnvContent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	content, err := os.ReadFile(filepath.Join(outputDir, ".env.openclaw"))
@@ -288,21 +280,20 @@ func TestRenderEnvContent(t *testing.T) {
 	}
 }
 
-func TestRenderSetupScriptExecutable(t *testing.T) {
+func TestGenerateSetupScriptExecutable(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	info, err := os.Stat(filepath.Join(outputDir, "setup.sh"))
@@ -331,23 +322,22 @@ func TestRenderSetupScriptExecutable(t *testing.T) {
 	}
 }
 
-func TestRenderCustomOptions(t *testing.T) {
+func TestGenerateCustomOptions(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 		"--openclaw-gateway-port", "9999",
 		"--openclaw-gateway-bind", "loopback",
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	dockerfile, _ := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
@@ -360,23 +350,22 @@ func TestRenderCustomOptions(t *testing.T) {
 	}
 }
 
-func TestRenderIdempotent(t *testing.T) {
+func TestGenerateIdempotent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	args := []string{
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	}
 
 	result := h.Run(args...)
 	if result.Err != nil {
-		t.Fatalf("first render failed: %v", result.Err)
+		t.Fatalf("first generate failed: %v", result.Err)
 	}
 
 	first, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
@@ -387,7 +376,7 @@ func TestRenderIdempotent(t *testing.T) {
 	// Run again — should overwrite with identical content.
 	result = h.Run(args...)
 	if result.Err != nil {
-		t.Fatalf("second render failed: %v", result.Err)
+		t.Fatalf("second generate failed: %v", result.Err)
 	}
 
 	second, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
@@ -396,7 +385,7 @@ func TestRenderIdempotent(t *testing.T) {
 	}
 
 	if string(first) != string(second) {
-		t.Error("render is not idempotent — Dockerfile content differs between runs")
+		t.Error("generate is not idempotent — Dockerfile content differs between runs")
 	}
 }
 
@@ -419,17 +408,11 @@ func TestGenerateFullPipeline(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	// All artifacts should exist.
-	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem", "nginx.conf", "nginx-cert.pem", "nginx-key.pem"} {
+	// All artifacts should exist including versions.json in output dir.
+	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem", "nginx.conf", "nginx-cert.pem", "nginx-key.pem", "versions.json"} {
 		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
 			t.Errorf("expected %s to exist after generate: %v", name, err)
 		}
-	}
-
-	// Manifest should have been written to the cache dir.
-	manifestPath := filepath.Join(setup.CacheDir, "openclaw-docker", "versions.json")
-	if _, err := os.Stat(manifestPath); err != nil {
-		t.Errorf("expected manifest at %s: %v", manifestPath, err)
 	}
 
 	// Dockerfile should contain a real resolved version (not empty or "latest").
@@ -445,21 +428,20 @@ func TestGenerateFullPipeline(t *testing.T) {
 	}
 }
 
-func TestRenderSquidConfContent(t *testing.T) {
+func TestGenerateSquidConfContent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	content, err := os.ReadFile(filepath.Join(outputDir, "squid.conf"))
@@ -481,22 +463,21 @@ func TestRenderSquidConfContent(t *testing.T) {
 	}
 }
 
-func TestRenderSquidConfAllowedDomains(t *testing.T) {
+func TestGenerateSquidConfAllowedDomains(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 		"--squid-allowed-domains", "api.anthropic.com,api.openai.com",
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	content, err := os.ReadFile(filepath.Join(outputDir, "squid.conf"))
@@ -512,21 +493,20 @@ func TestRenderSquidConfAllowedDomains(t *testing.T) {
 	}
 }
 
-func TestRenderOpenClawJSONContent(t *testing.T) {
+func TestGenerateOpenClawJSONContent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	content, err := os.ReadFile(filepath.Join(outputDir, "openclaw.json"))
@@ -550,21 +530,20 @@ func TestRenderOpenClawJSONContent(t *testing.T) {
 	}
 }
 
-func TestRenderCAGeneration(t *testing.T) {
+func TestGenerateCAGeneration(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	certPath := filepath.Join(outputDir, "ca-cert.pem")
@@ -590,37 +569,35 @@ func TestRenderCAGeneration(t *testing.T) {
 	result = h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("second render failed: %v", result.Err)
+		t.Fatalf("second generate failed: %v", result.Err)
 	}
 
 	certData2, err := os.ReadFile(certPath)
 	if err != nil {
-		t.Fatalf("read ca-cert.pem after second render: %v", err)
+		t.Fatalf("read ca-cert.pem after second generate: %v", err)
 	}
 	if string(certData) != string(certData2) {
-		t.Error("CA cert changed between renders — should be preserved")
+		t.Error("CA cert changed between generates — should be preserved")
 	}
 }
 
-func TestRenderNginxConfContent(t *testing.T) {
+func TestGenerateNginxConfContent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	content, err := os.ReadFile(filepath.Join(outputDir, "nginx.conf"))
@@ -646,21 +623,20 @@ func TestRenderNginxConfContent(t *testing.T) {
 	}
 }
 
-func TestRenderNginxCertGeneration(t *testing.T) {
+func TestGenerateNginxCertGeneration(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
-	versionsFile := seedManifest(t, setup.CacheDir)
+	seedManifest(t, setup.BaseDir)
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("render failed: %v", result.Err)
+		t.Fatalf("generate failed: %v", result.Err)
 	}
 
 	certPath := filepath.Join(outputDir, "nginx-cert.pem")
@@ -686,18 +662,17 @@ func TestRenderNginxCertGeneration(t *testing.T) {
 	result = h.Run(
 		"generate",
 		"--dangerous-inline",
-		"--versions-file", versionsFile,
 		"--output", outputDir,
 	)
 	if result.Err != nil {
-		t.Fatalf("second render failed: %v", result.Err)
+		t.Fatalf("second generate failed: %v", result.Err)
 	}
 
 	certData2, err := os.ReadFile(certPath)
 	if err != nil {
-		t.Fatalf("read nginx-cert.pem after second render: %v", err)
+		t.Fatalf("read nginx-cert.pem after second generate: %v", err)
 	}
 	if string(certData) != string(certData2) {
-		t.Error("nginx cert changed between renders — should be preserved")
+		t.Error("nginx cert changed between generates — should be preserved")
 	}
 }

@@ -9,9 +9,6 @@ func DefaultTemplate() string {
 # Requested version/tag to resolve (dist-tag or semver partial)
 version: latest
 
-# Where resolved version metadata is cached
-versions_file: ${XDG_CACHE_HOME}/openclaw-docker/versions.json
-
 # Output root for generated artifacts:
 # - <output>/Dockerfile
 # - <output>/compose.yaml

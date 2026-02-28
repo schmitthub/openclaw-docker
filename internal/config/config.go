@@ -9,7 +9,6 @@ import (
 
 type FileConfig struct {
 	Version              string `yaml:"version"`
-	VersionsFile         string `yaml:"versions_file"`
 	OutputDir            string `yaml:"output"`
 	Cleanup              *bool  `yaml:"cleanup"`
 	Debug                *bool  `yaml:"debug"`

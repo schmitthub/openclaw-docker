@@ -15,7 +15,6 @@ import (
 type runtimeOptions struct {
 	ConfigPath           string
 	OutputDir            string
-	VersionsFile         string
 	Version              string
 	Cleanup              bool
 	Debug                bool
@@ -54,28 +53,12 @@ func NewRootCmd(buildVersion, buildDate string) *cobra.Command {
 
 	cmd.PersistentFlags().StringVarP(&rootOpts.ConfigPath, "config", "f", "", "Path to YAML config file")
 	cmd.Flags().BoolVar(&showVersion, "version", false, "Print CLI version")
-	cmd.PersistentFlags().StringVarP(&rootOpts.OutputDir, "output", "o", "", "Dockerfile output directory (defaults to ./openclaw-deploy)")
-	cmd.PersistentFlags().StringVar(&rootOpts.VersionsFile, "versions-file", "", "Path to versions manifest JSON")
 	cmd.PersistentFlags().BoolVar(&rootOpts.Debug, "debug", false, "Enable debug logging")
-	cmd.PersistentFlags().BoolVar(&rootOpts.Cleanup, "cleanup", false, "Show defensive cleanup warning (deletes are disabled; generation is overwrite-only)")
 	cmd.PersistentFlags().BoolVar(&rootOpts.DangerousInline, "dangerous-inline", false, "Skip write confirmation prompts and perform writes inline")
-	cmd.PersistentFlags().StringVar(&rootOpts.DockerAptPackages, "docker-apt-packages", "", "Additional apt packages to install in generated Dockerfile")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawConfigDir, "openclaw-config-dir", "", "Default OPENCLAW_CONFIG_DIR value baked into generated Dockerfile")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawWorkspaceDir, "openclaw-workspace-dir", "", "Default OPENCLAW_WORKSPACE_DIR value baked into generated Dockerfile")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawGatewayPort, "openclaw-gateway-port", "", "Default OPENCLAW_GATEWAY_PORT value baked into generated Dockerfile")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawBridgePort, "openclaw-bridge-port", "", "Default OPENCLAW_BRIDGE_PORT value baked into generated Dockerfile")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawGatewayBind, "openclaw-gateway-bind", "", "Default OPENCLAW_GATEWAY_BIND value baked into generated Dockerfile")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawImage, "openclaw-image", "", "Default OPENCLAW_IMAGE value used in generated compose/.env.openclaw")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawGatewayToken, "openclaw-gateway-token", "", "Default OPENCLAW_GATEWAY_TOKEN value used in generated compose/.env.openclaw")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawExtraMounts, "openclaw-extra-mounts", "", "Default OPENCLAW_EXTRA_MOUNTS value used in generated compose/.env.openclaw")
-	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawHomeVolume, "openclaw-home-volume", "", "Default OPENCLAW_HOME_VOLUME value used in generated compose/.env.openclaw")
-	cmd.PersistentFlags().StringVar(&rootOpts.SquidAllowedDomains, "squid-allowed-domains", "", "Comma-separated domains to whitelist in squid egress proxy")
-	cmd.PersistentFlags().StringVar(&rootOpts.Version, "openclaw-version", "", "Requested OpenClaw version/tag (dist-tag like 'latest' or semver partial like '2026.2')")
 
 	cmd.AddCommand(newVersionCmd(buildVersion, buildDate))
 	cmd.AddCommand(newConfigCmd())
 	cmd.AddCommand(newGenerateCmd())
-	cmd.AddCommand(newResolveCmd())
 
 	return cmd
 }
@@ -88,7 +71,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 
 	merged := runtimeOptions{
 		OutputDir:            filepath.Join(cwd, "openclaw-deploy"),
-		VersionsFile:         defaultVersionsFilePath(),
 		Version:              "latest",
 		Cleanup:              false,
 		DockerAptPackages:    "",
@@ -112,9 +94,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 
 		if fileCfg.Version != "" {
 			merged.Version = fileCfg.Version
-		}
-		if fileCfg.VersionsFile != "" {
-			merged.VersionsFile = fileCfg.VersionsFile
 		}
 		if fileCfg.OutputDir != "" {
 			merged.OutputDir = fileCfg.OutputDir
@@ -167,9 +146,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	if cmd.Flags().Changed("output") {
 		merged.OutputDir = rootOpts.OutputDir
 	}
-	if cmd.Flags().Changed("versions-file") {
-		merged.VersionsFile = rootOpts.VersionsFile
-	}
 	if cmd.Flags().Changed("cleanup") {
 		merged.Cleanup = rootOpts.Cleanup
 	}
@@ -217,7 +193,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	}
 
 	merged.OutputDir = strings.TrimSpace(merged.OutputDir)
-	merged.VersionsFile = strings.TrimSpace(merged.VersionsFile)
 	merged.Version = strings.TrimSpace(merged.Version)
 	merged.DockerAptPackages = strings.TrimSpace(merged.DockerAptPackages)
 	merged.OpenClawConfigDir = strings.TrimSpace(merged.OpenClawConfigDir)
@@ -241,9 +216,6 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 func applyEnvOverrides(opts *runtimeOptions) error {
 	if value, ok := getenvTrim("OPENCLAW_DOCKER_OUTPUT"); ok {
 		opts.OutputDir = value
-	}
-	if value, ok := getenvTrim("OPENCLAW_DOCKER_VERSIONS_FILE"); ok {
-		opts.VersionsFile = value
 	}
 	if value, ok := getenvTrim("OPENCLAW_DOCKER_VERSION"); ok {
 		opts.Version = value
@@ -320,21 +292,4 @@ func parseBoolEnv(name, raw string) (bool, error) {
 		return false, fmt.Errorf("parse %s as bool: %w", name, err)
 	}
 	return parsed, nil
-}
-
-func defaultVersionsFilePath() string {
-	if cacheDir := strings.TrimSpace(os.Getenv("OPENCLAW_DOCKER_CACHE_DIR")); cacheDir != "" {
-		return filepath.Join(cacheDir, "openclaw-docker", "versions.json")
-	}
-
-	if xdgCache := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME")); xdgCache != "" {
-		return filepath.Join(xdgCache, "openclaw-docker", "versions.json")
-	}
-
-	homeDir, err := os.UserHomeDir()
-	if err == nil && homeDir != "" {
-		return filepath.Join(homeDir, ".cache", "openclaw-docker", "versions.json")
-	}
-
-	return filepath.Join(".cache", "openclaw-docker", "versions.json")
 }

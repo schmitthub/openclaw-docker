@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -14,9 +15,24 @@ import (
 func newGenerateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
-		Short: "Resolve version and generate Dockerfile",
+		Short: "Resolve version and generate deployment artifacts",
 		RunE:  runGenerate,
 	}
+
+	cmd.Flags().StringVarP(&rootOpts.OutputDir, "output", "o", "", "Dockerfile output directory (defaults to ./openclaw-deploy)")
+	cmd.Flags().StringVar(&rootOpts.Version, "openclaw-version", "", "Requested OpenClaw version/tag (dist-tag like 'latest' or semver partial like '2026.2')")
+	cmd.Flags().BoolVar(&rootOpts.Cleanup, "cleanup", false, "Show defensive cleanup warning (deletes are disabled; generation is overwrite-only)")
+	cmd.Flags().StringVar(&rootOpts.DockerAptPackages, "docker-apt-packages", "", "Additional apt packages to install in generated Dockerfile")
+	cmd.Flags().StringVar(&rootOpts.OpenClawConfigDir, "openclaw-config-dir", "", "Default OPENCLAW_CONFIG_DIR value baked into generated Dockerfile")
+	cmd.Flags().StringVar(&rootOpts.OpenClawWorkspaceDir, "openclaw-workspace-dir", "", "Default OPENCLAW_WORKSPACE_DIR value baked into generated Dockerfile")
+	cmd.Flags().StringVar(&rootOpts.OpenClawGatewayPort, "openclaw-gateway-port", "", "Default OPENCLAW_GATEWAY_PORT value baked into generated Dockerfile")
+	cmd.Flags().StringVar(&rootOpts.OpenClawBridgePort, "openclaw-bridge-port", "", "Default OPENCLAW_BRIDGE_PORT value baked into generated Dockerfile")
+	cmd.Flags().StringVar(&rootOpts.OpenClawGatewayBind, "openclaw-gateway-bind", "", "Default OPENCLAW_GATEWAY_BIND value baked into generated Dockerfile")
+	cmd.Flags().StringVar(&rootOpts.OpenClawImage, "openclaw-image", "", "Default OPENCLAW_IMAGE value used in generated compose/.env.openclaw")
+	cmd.Flags().StringVar(&rootOpts.OpenClawGatewayToken, "openclaw-gateway-token", "", "Default OPENCLAW_GATEWAY_TOKEN value used in generated compose/.env.openclaw")
+	cmd.Flags().StringVar(&rootOpts.OpenClawExtraMounts, "openclaw-extra-mounts", "", "Default OPENCLAW_EXTRA_MOUNTS value used in generated compose/.env.openclaw")
+	cmd.Flags().StringVar(&rootOpts.OpenClawHomeVolume, "openclaw-home-volume", "", "Default OPENCLAW_HOME_VOLUME value used in generated compose/.env.openclaw")
+	cmd.Flags().StringVar(&rootOpts.SquidAllowedDomains, "squid-allowed-domains", "", "Comma-separated domains to whitelist in squid egress proxy")
 
 	return cmd
 }
@@ -29,20 +45,14 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 
 	var meta versions.ReleaseMeta
 
-	// If a versions file already exists and --openclaw-version was not
-	// explicitly requested, reuse the cached manifest instead of resolving
-	// from npm.
-	if !cmd.Flags().Changed("openclaw-version") {
-		if _, err := os.Stat(opts.VersionsFile); err == nil {
-			meta, err = versions.ReadManifest(opts.VersionsFile)
-			if err != nil {
-				return err
-			}
+	// OPENCLAW_DOCKER_VERSIONS_FILE allows test environments to provide a
+	// pre-resolved manifest, bypassing npm resolution entirely.
+	if envFile, ok := os.LookupEnv("OPENCLAW_DOCKER_VERSIONS_FILE"); ok {
+		meta, err = versions.ReadManifest(envFile)
+		if err != nil {
+			return err
 		}
-	}
-
-	// Resolve from npm when we don't yet have metadata.
-	if meta.FullVersion == "" {
+	} else {
 		meta, err = versions.Resolve(context.Background(), versions.ResolveOptions{
 			Requested: opts.Version,
 			Debug:     opts.Debug,
@@ -50,10 +60,13 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
+	}
 
-		if err := versions.WriteManifest(opts.VersionsFile, meta); err != nil {
-			return err
-		}
+	// Write manifest to output dir so subsequent runs can detect what
+	// version is already rendered there.
+	manifestPath := filepath.Join(opts.OutputDir, "versions.json")
+	if err := versions.WriteManifest(manifestPath, meta); err != nil {
+		return err
 	}
 
 	if err := render.Generate(render.Options{
