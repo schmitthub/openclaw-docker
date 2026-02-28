@@ -1,0 +1,117 @@
+# Clawker configuration for openclaw-docker
+# Go CLI that generates OpenClaw Docker deployment artifacts
+# Learn more about Clawker at https://clawker.dev; https://docs.clawker.dev; https://github.com/schmitthub/clawker
+
+build:
+  image: "buildpack-deps:bookworm-scm"
+  packages:
+    - git
+    - curl
+    - ripgrep
+    - less
+    - procps
+    - sudo
+    - fzf
+    - zsh
+    - man-db
+    - unzip
+    - gnupg2
+    - iptables
+    - ipset
+    - iproute2
+    - dnsutils
+    - aggregate
+    - jq
+    - nano
+    - vim
+    - wget
+    - curl
+    - gh
+    - locales
+    - locales-all
+    - iputils-ping
+    - shellcheck
+    - nodejs
+    - npm
+  instructions:
+    root_run:
+      - cmd: |
+          ARCH=$(dpkg --print-architecture) && \
+            curl -fsSL "https://golang.org/dl/go1.26.0.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf - \
+            && echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
+    user_run:
+      - cmd: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - cmd: uv tool install pre-commit --with pre-commit-uv
+      - cmd: /usr/local/go/bin/go install golang.org/x/tools/gopls@latest
+      - cmd: /usr/local/go/bin/go install gotest.tools/gotestsum@latest
+      - cmd: /usr/local/go/bin/go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - cmd: /usr/local/go/bin/go install golang.org/x/vuln/cmd/govulncheck@latest
+      - cmd: /usr/local/go/bin/go install golang.org/x/tools/cmd/goimports@latest
+      - cmd: uv tool install semgrep
+  inject:
+    after_user_switch:
+        - ENV PATH="$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin"
+
+agent:
+  from_env:
+    - GH_TOKEN
+    - CONTEXT7_API_KEY
+  claude_code:
+    config:
+      strategy: copy
+    use_host_auth: true
+  enable_shared_dir: true
+  post_init: |
+    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+    claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
+    claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
+
+workspace:
+  default_mode: bind
+
+security:
+  firewall:
+    enable: true
+    ip_range_sources:
+      - name: github
+      - name: google  # Required for Go modules (proxy.golang.org uses GCS)
+    add_domains:
+      - charm.land
+      - code.gitea.io
+      - golang.org
+      - proxy.golang.org
+      - sum.golang.org
+      - gocloud.dev
+      - gopkg.in
+      - software.sslmate.com
+      - cloud.google.com
+      - sigs.k8s.io
+      - google.golang.org
+      - storage.googleapis.com
+      - go.opentelemetry.io
+      - go.uber.org
+      - lukechampine.com
+      - go.yaml.in
+      - cel.dev
+      - files.pythonhosted.org
+      - code.claude.com
+      - mcp.deepwiki.com
+      - mcp.context7.com
+      - pypi.org
+      - semgrep.dev
+      - registry.npmjs.org
+      - openclaw.ai
+      - astral.sh
+      - docs.openclaw.ai
+  docker_socket: true
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    forward_gpg: true
+    copy_git_config: true
+
+loop:
+  max_loops: 30
+  timeout_minutes: 10
+  stagnation_threshold: 3
+  max_consecutive_test_loops: 3

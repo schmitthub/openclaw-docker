@@ -1,0 +1,52 @@
+# Pre-commit hooks — mirrors CI quality gates locally.
+# Install: bash scripts/install-hooks.sh
+# Run all: pre-commit run --all-files
+# Run one: pre-commit run gitleaks --all-files
+
+repos:
+  # ── Security ──────────────────────────────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+        args: [--baseline-path, gitleaks-report.json]
+  - repo: local
+    hooks:
+      - id: semgrep
+        name: Semgrep SAST
+        # Expected version: 1.146.0 (must match CI image tag in security.yml)
+        entry: semgrep scan --config p/golang --config p/security-audit --error
+        language: system
+        types: [go]
+        pass_filenames: false
+
+ # ── Lint ──────────────────────────────────────────────────────────────────
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.9.0
+    hooks:
+      - id: golangci-lint-full
+        args: [--config, .golangci.yml]
+
+  # ── Quality ─────────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: govulncheck
+        name: govulncheck SCA
+        entry: govulncheck ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-test
+        name: Unit tests
+        entry: make test
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: licenses-check
+        name: NOTICE freshness
+        entry: make licenses-check
+        language: system
+        files: ^go\.(mod|sum)$
+        pass_filenames: false
