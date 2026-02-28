@@ -13,6 +13,7 @@ The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized 
 | `compose.yaml` | 0644 | 3 services: envoy, openclaw-gateway, openclaw-cli |
 | `.env.openclaw` | 0644 | Runtime env vars (token, ports, bind settings) |
 | `setup.sh` | 0755 | Build, onboard, configure (via CLI), compose up |
+| `openclaw` | 0755 | CLI wrapper (`docker compose run --rm openclaw-cli "$@"`) |
 | `manifest.json` | 0644 | Resolved version metadata |
 
 **`compose/openclaw/`:**

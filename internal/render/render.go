@@ -84,6 +84,10 @@ func Generate(opts Options) error {
 		return err
 	}
 
+	if err := writeCLIWrapper(opts); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -886,6 +890,30 @@ func writeEntrypoint(opts Options) error {
 
 	if err := os.WriteFile(path, []byte(entrypointContent()), 0o755); err != nil {
 		return fmt.Errorf("write entrypoint.sh %q: %w", path, err)
+	}
+
+	return nil
+}
+
+func cliWrapperContent() string {
+	return `#!/usr/bin/env bash
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec docker compose -f "$ROOT_DIR/compose.yaml" run --rm openclaw-cli "$@"
+`
+}
+
+func writeCLIWrapper(opts Options) error {
+	path := filepath.Join(opts.OutputDir, "openclaw")
+
+	if opts.ConfirmWrite != nil {
+		if err := opts.ConfirmWrite(path); err != nil {
+			return err
+		}
+	}
+
+	if err := os.WriteFile(path, []byte(cliWrapperContent()), 0o755); err != nil {
+		return fmt.Errorf("write openclaw wrapper %q: %w", path, err)
 	}
 
 	return nil

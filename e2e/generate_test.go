@@ -60,6 +60,7 @@ func TestGenerateProducesAllFiles(t *testing.T) {
 		"compose.yaml",
 		".env.openclaw",
 		"setup.sh",
+		"openclaw",
 		"manifest.json",
 	} {
 		path := filepath.Join(outputDir, name)
@@ -495,6 +496,7 @@ func TestGenerateFullPipeline(t *testing.T) {
 		"compose.yaml",
 		".env.openclaw",
 		"setup.sh",
+		"openclaw",
 		"manifest.json",
 	} {
 		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
@@ -722,6 +724,52 @@ func TestGenerateEntrypointContent(t *testing.T) {
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("entrypoint.sh missing expected content: %q", s)
+		}
+	}
+}
+
+func TestGenerateCLIWrapperContent(t *testing.T) {
+	h := &harness.Harness{T: t}
+	setup := h.NewIsolatedFS()
+
+	seedManifest(t, setup.BaseDir)
+	outputDir := filepath.Join(setup.BaseDir, "deploy")
+
+	result := h.Run(
+		"generate",
+		"--dangerous-inline",
+		"--output", outputDir,
+	)
+	if result.Err != nil {
+		t.Fatalf("generate failed: %v", result.Err)
+	}
+
+	path := filepath.Join(outputDir, "openclaw")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("openclaw wrapper missing: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Error("openclaw wrapper should be executable")
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read openclaw wrapper: %v", err)
+	}
+	body := string(content)
+
+	if !strings.HasPrefix(body, "#!/usr/bin/env bash") {
+		t.Error("openclaw wrapper missing shebang")
+	}
+
+	for _, s := range []string{
+		"docker compose",
+		"run --rm openclaw-cli",
+		`"$@"`,
+	} {
+		if !strings.Contains(body, s) {
+			t.Errorf("openclaw wrapper missing expected content: %q", s)
 		}
 	}
 }

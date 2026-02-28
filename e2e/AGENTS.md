@@ -6,7 +6,7 @@ End-to-end generation tests. Package name: `test`.
 
 | File | Purpose |
 |------|---------|
-| `generate_test.go` | 14 tests covering generate pipeline |
+| `generate_test.go` | 15 tests covering generate pipeline |
 | `harness/harness.go` | Test harness: isolated FS + Cobra CLI execution |
 
 ## Running
@@ -33,7 +33,7 @@ All other tests use seeded manifests and don't require network access.
 
 ## Current Test Coverage
 
-- File existence and non-emptiness (9 artifacts in compose/<service>/ subdirs + root)
+- File existence and non-emptiness (10 artifacts in compose/<service>/ subdirs + root)
 - Output directory structure (compose/openclaw, compose/envoy; no squid/nginx)
 - Dockerfile content (base image, version, iptables, iproute2, gosu, pnpm, bun, ENTRYPOINT, no proxy-preload)
 - Custom apt packages
@@ -50,6 +50,7 @@ All other tests use seeded manifests and don't require network access.
 - Envoy allowed domains propagation via --allowed-domains (additive to all hardcoded domains)
 - TLS cert generation (valid PEM, idempotent across re-runs)
 - Entrypoint content (default route via Envoy, DOCKER_OUTPUT chain restore, iptables NAT DNAT to Envoy, FILTER OUTPUT DROP, Docker DNS, gosu node, executable)
+- CLI wrapper content (shebang, docker compose run --rm openclaw-cli, "$@" passthrough, executable perms)
 
 ## Test Pattern
 

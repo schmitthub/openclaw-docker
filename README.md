@@ -142,6 +142,7 @@ openclaw-deploy/
 ├── compose.yaml                 # 3 services: envoy, gateway, cli
 ├── .env.openclaw                # Runtime env vars (token, ports, bind)
 ├── setup.sh                     # Interactive setup: build, onboard, configure, start
+├── openclaw                     # CLI wrapper (runs docker compose run --rm openclaw-cli)
 └── manifest.json                # Resolved version metadata
 ```
 
@@ -177,21 +178,32 @@ Accept the self-signed certificate warning in your browser.
 
 ## Common Operations
 
+The generated `openclaw` wrapper script passes all arguments through to `docker compose run --rm openclaw-cli`:
+
 ```bash
+# View gateway config
+./openclaw-deploy/openclaw config get gateway
+
+# View channel config
+./openclaw-deploy/openclaw config get channels
+
+# Set Discord bot token
+./openclaw-deploy/openclaw config set channels.discord.token "\"${DISCORD_BOT_TOKEN}\"" --json
+
+# Enable Discord channel
+./openclaw-deploy/openclaw config set channels.discord.enabled true --json
+
+# List Discord pairing requests
+./openclaw-deploy/openclaw pairing list discord
+
+# Approve a Discord pairing request
+./openclaw-deploy/openclaw pairing approve discord <CODE>
+
 # View gateway logs
 docker compose -f ./openclaw-deploy/compose.yaml logs -f openclaw-gateway
 
-# View gateway config
-docker compose -f ./openclaw-deploy/compose.yaml run --rm openclaw-cli config get gateway
-
-# Add WhatsApp (QR code)
-docker compose -f ./openclaw-deploy/compose.yaml run --rm openclaw-cli channels login
-
-# Add Telegram bot
-docker compose -f ./openclaw-deploy/compose.yaml run --rm openclaw-cli channels add --channel telegram --token <token>
-
-# Add Discord bot
-docker compose -f ./openclaw-deploy/compose.yaml run --rm openclaw-cli channels add --channel discord --token <token>
+# Restart gateway after config changes
+docker compose -f ./openclaw-deploy/compose.yaml restart openclaw-gateway
 
 # Restart after editing envoy.yaml
 docker compose -f ./openclaw-deploy/compose.yaml restart envoy

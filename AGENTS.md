@@ -34,6 +34,7 @@ Primary goals:
 ├── compose.yaml                 # 3 services: envoy, openclaw-gateway, openclaw-cli
 ├── .env.openclaw                # Runtime env vars (token, ports, bind settings)
 ├── manifest.json                # Resolved version metadata
+├── openclaw                     # CLI wrapper (runs docker compose run --rm openclaw-cli)
 └── setup.sh                     # Build, onboard, configure, start
 ```
 
