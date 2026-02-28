@@ -1,6 +1,6 @@
 module github.com/schmitthub/openclaw-docker
 
-go 1.22
+go 1.25
 
 require (
 	github.com/Masterminds/semver/v3 v3.3.0

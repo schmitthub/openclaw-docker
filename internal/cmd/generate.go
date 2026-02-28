@@ -47,10 +47,20 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	}
 
 	if err := render.Generate(render.Options{
-		Manifest:     manifest,
-		OutputDir:    opts.OutputDir,
-		TemplatesDir: opts.TemplatesDir,
-		Cleanup:      opts.Cleanup,
+		Manifest:             manifest,
+		OutputDir:            opts.OutputDir,
+		TemplatesDir:         opts.TemplatesDir,
+		Cleanup:              opts.Cleanup,
+		DockerAptPackages:    opts.DockerAptPackages,
+		OpenClawConfigDir:    opts.OpenClawConfigDir,
+		OpenClawWorkspaceDir: opts.OpenClawWorkspaceDir,
+		OpenClawGatewayPort:  opts.OpenClawGatewayPort,
+		OpenClawBridgePort:   opts.OpenClawBridgePort,
+		OpenClawGatewayBind:  opts.OpenClawGatewayBind,
+		OpenClawImage:        opts.OpenClawImage,
+		OpenClawGatewayToken: opts.OpenClawGatewayToken,
+		OpenClawExtraMounts:  opts.OpenClawExtraMounts,
+		OpenClawHomeVolume:   opts.OpenClawHomeVolume,
 		ConfirmWrite: func(path string) error {
 			return confirmWrite(cmd, opts.DangerousInline, path)
 		},

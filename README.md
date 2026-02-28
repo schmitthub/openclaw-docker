@@ -8,6 +8,7 @@
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-supported-6E56CF)](https://docs.openclaw.ai/install/docker)
 ![macOS](https://img.shields.io/badge/macOS-supported-000000?logo=apple&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/schmitthub/openclaw-docker)
 
 CLI for building custom OpenClaw Dockerfiles across multiple Linux variants and versions.
 
@@ -17,6 +18,7 @@ CLI for building custom OpenClaw Dockerfiles across multiple Linux variants and 
 - Resolves OpenClaw versions from npm package `openclaw` (dist-tags first, semver fallback).
 - Lets you customize generated outputs via flags and explicit config file input.
 - Generates Dockerfiles per version/variant matrix at `<output>/<version>/<variant>/Dockerfile`.
+- Generates `compose.yaml` and `.env.openclaw` at the output root for runtime defaults and env-based overrides.
 - Focuses on empowering users to run OpenClaw via Docker with secure-by-default images.
 - Supports config file input via explicit `--config|-f` only (no discovery), with flags taking precedence.
 - Installs OpenClaw in images via:
@@ -73,11 +75,22 @@ go run . version
 go run . resolve --version latest
 go run . render --versions-file "$XDG_CACHE_HOME/openclaw-docker/versions.json" --output ./dockerfiles
 
-# disable update checks for a command
-go run . --no-update-check version
-
 # skip per-write prompts (non-interactive/CI)
 go run . --dangerous-inline --version latest
+
+# bake setup defaults into generated Dockerfiles
+go run . --dangerous-inline \
+  --version latest \
+  --docker-apt-packages "git-lfs ripgrep" \
+  --openclaw-config-dir /home/openclaw/.openclaw \
+  --openclaw-workspace-dir /home/openclaw/.openclaw/workspace \
+  --openclaw-gateway-port 18789 \
+  --openclaw-bridge-port 18790 \
+  --openclaw-gateway-bind lan \
+  --openclaw-image openclaw:local \
+  --openclaw-gateway-token "" \
+  --openclaw-extra-mounts "" \
+  --openclaw-home-volume ""
 
 # explicit subcommands in non-interactive mode
 go run . --dangerous-inline resolve --version latest
@@ -110,14 +123,14 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scr
 
 ### Update checks
 
-- By default the CLI checks `schmitthub/openclaw-docker` releases with a cached interval and prints a concise upgrade hint when a newer version exists.
-- Disable checks per invocation with `--no-update-check`.
+- The CLI always checks `schmitthub/openclaw-docker` GitHub releases with a cached interval and prints a concise upgrade hint when a newer CLI version exists.
 
 ### Output behavior
 
 - `--output|-o` controls Dockerfile output root.
 - If omitted, output defaults to `./openclawdockerfiles`.
 - Generation is additive and overwrite-only; existing generated files can be replaced, but directories are not deleted.
+- Output root includes generated `compose.yaml` and `.env.openclaw` for runtime compose usage.
 - `--cleanup` prints a defensive warning with the target directory and still does not perform deletes.
 - By default, each manifest and Dockerfile write prompts for confirmation.
 - Use `--dangerous-inline` to bypass all write prompts (recommended for CI/non-interactive runs).
@@ -126,7 +139,24 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scr
 
 - Config file path must be passed explicitly using `--config` or `-f`.
 - No automatic config discovery is performed.
-- Flags always override values from config.
+- Precedence is: `flags > environment variables > config file > defaults`.
+- Dockerfile generation settings supported in config YAML:
+  - `docker_apt_packages`
+  - `openclaw_config_dir`
+  - `openclaw_workspace_dir`
+  - `openclaw_gateway_port`
+  - `openclaw_bridge_port`
+  - `openclaw_gateway_bind`
+  - `openclaw_image`
+  - `openclaw_gateway_token`
+  - `openclaw_extra_mounts`
+  - `openclaw_home_volume`
+- Environment variable overrides use the `OPENCLAW_DOCKER_` prefix (examples):
+  - `OPENCLAW_DOCKER_OUTPUT`, `OPENCLAW_DOCKER_VERSIONS_FILE`, `OPENCLAW_DOCKER_VERSIONS`
+  - `OPENCLAW_DOCKER_DEBUG`, `OPENCLAW_DOCKER_CLEANUP`, `OPENCLAW_DOCKER_DANGEROUS_INLINE`
+  - `OPENCLAW_DOCKER_OPENCLAW_CONFIG_DIR`, `OPENCLAW_DOCKER_OPENCLAW_WORKSPACE_DIR`
+  - `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_PORT`, `OPENCLAW_DOCKER_OPENCLAW_BRIDGE_PORT`, `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_BIND`
+  - `OPENCLAW_DOCKER_OPENCLAW_IMAGE`, `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_DOCKER_OPENCLAW_EXTRA_MOUNTS`, `OPENCLAW_DOCKER_OPENCLAW_HOME_VOLUME`
 
 ## Repository structure
 
