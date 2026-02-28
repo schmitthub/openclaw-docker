@@ -401,11 +401,15 @@ func TestGenerateSetupScriptExecutable(t *testing.T) {
 		"openssl rand",
 		"OPENCLAW_GATEWAY_TOKEN",
 		"up -d",
-		// Onboarding via gateway service (not CLI).
-		"openclaw-gateway onboard --no-install-daemon",
-		// Gateway config helpers.
+		// Onboarding via gateway service (passes openclaw as CMD, not --entrypoint).
+		"openclaw-gateway openclaw onboard --no-install-daemon",
+		// Skip-onboarding flag support.
+		"SKIP_ONBOARDING",
+		"--skip-onboarding",
+		// Gateway config helper.
 		"gw_config",
-		"cli_config",
+		// CLI config via wrapper (not a separate helper).
+		`"$ROOT_DIR/openclaw" config set`,
 		// Gateway mode safety net.
 		"gateway.mode local",
 		// Config management via gw_config.
@@ -424,8 +428,6 @@ func TestGenerateSetupScriptExecutable(t *testing.T) {
 		"devices approve --latest",
 		// Device identity directory.
 		"identity",
-		// CLI config on named volume.
-		"openclaw-cli-config",
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("setup.sh missing expected content: %q", s)
@@ -820,7 +822,8 @@ func TestGenerateCLIWrapperContent(t *testing.T) {
 		"--entrypoint openclaw",
 		"NODE_EXTRA_CA_CERTS",
 		"server-cert.pem",
-		"openclaw-cli-config",
+		"data/cli-config:/home/node/.openclaw",
+		"openclaw-egress",
 		`"$@"`,
 	} {
 		if !strings.Contains(body, s) {
@@ -829,7 +832,6 @@ func TestGenerateCLIWrapperContent(t *testing.T) {
 	}
 
 	// Should not reference the removed openclaw-cli compose service.
-	// (openclaw-cli-config is the named volume, which is fine.)
 	if strings.Contains(body, "openclaw-cli ") || strings.Contains(body, "openclaw-cli\"") {
 		t.Error("openclaw wrapper should not reference openclaw-cli compose service")
 	}

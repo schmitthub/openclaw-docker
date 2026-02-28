@@ -46,29 +46,30 @@ Primary goals:
 | `openclaw-gateway` | OpenClaw gateway (AI agent runtime) | internal only | unless-stopped |
 
 - `openclaw-gateway` uses the Dockerfile ENTRYPOINT (`entrypoint.sh` → iptables → gosu) with an explicit `command: ["openclaw", "gateway", "--bind", "lan", "--port", "18789"]`.
-- The CLI is **not** a compose service. It runs as a standalone `docker run --rm` container that connects to the gateway through Envoy's TLS ingress (`wss://envoy:443`) as a remote client. Config and device identity persist on the `openclaw-cli-config` named Docker volume. Trusts the self-signed cert via `NODE_EXTRA_CA_CERTS`. The `./openclaw` wrapper script handles this.
+- The CLI is **not** a compose service. It runs as a standalone `docker run --rm` container on the `openclaw-egress` network, connecting to the gateway through Envoy's TLS ingress (`wss://envoy:443`) as a remote client. Config and device identity persist via bind mount at `data/cli-config/`. Trusts the self-signed cert via `NODE_EXTRA_CA_CERTS`. The `./openclaw` wrapper script handles this.
 
 ## Setup Flow (setup.sh)
 
-The generated `setup.sh` mirrors the official OpenClaw docker-setup.sh with Envoy additions:
+The generated `setup.sh` mirrors the official OpenClaw docker-setup.sh with Envoy additions. Supports `--skip-onboarding` flag to reuse existing gateway config.
 
 1. Create host dirs: `data/config/`, `data/workspace/`, `data/config/identity/`
 2. `docker compose build`
-3. `docker compose run --rm --entrypoint openclaw openclaw-gateway onboard --no-install-daemon` (interactive)
+3. `docker compose run --rm openclaw-gateway openclaw onboard --no-install-daemon` (interactive, skipped with `--skip-onboarding`)
 4. `gw_config config set gateway.mode local` (safety net — required for gateway to start)
 5. Generate or reuse gateway token, set `gateway.auth.mode token` + `gateway.auth.token`
 6. `gw_config config set gateway.trustedProxies [Docker CIDRs]`
 7. `ensure_control_ui_allowed_origins` (sets `gateway.controlUi.allowedOrigins`)
 8. `gw_config config set discovery.mdns.mode off`
-9. Configure CLI remote access: `cli_config config set gateway.mode remote` + `gateway.remote.url wss://envoy:443` + `gateway.remote.transport direct` + `gateway.remote.token`
+9. Configure CLI remote access via `./openclaw` wrapper: `gateway.mode remote` + `gateway.remote.url wss://envoy:443` + `gateway.remote.transport direct` + `gateway.remote.token`
 10. `docker compose up -d`, wait for gateway
 11. Pair CLI device: `./openclaw devices list` (triggers pairing) + `devices approve --latest`
 
-Two config helpers in setup.sh:
-- `gw_config`: `docker compose run --rm --no-deps --entrypoint openclaw openclaw-gateway` — modifies gateway's config file directly (pre-start, no network needed)
-- `cli_config`: `docker run --rm -v openclaw-cli-config:/home/node/.openclaw ... openclaw` — modifies CLI config on the named volume (standalone, no compose service)
+Gateway config helper in setup.sh:
+- `gw_config`: `docker compose run --rm --no-deps openclaw-gateway openclaw "$@"` — passes `openclaw` as CMD so entrypoint.sh runs first (iptables + gosu), then executes `openclaw` as `node` user. `--no-deps` skips starting Envoy.
 
-Gateway configuration is managed via direct file access (`gw_config`) — there is no pre-generated `openclaw.json` template. The CLI connects as a remote client with its own config directory.
+CLI config is done via the `./openclaw` wrapper script directly (standalone `docker run --rm` with `--entrypoint openclaw` to bypass entrypoint.sh since the CLI container has no `CAP_NET_ADMIN` and isn't on the internal network).
+
+Gateway configuration is managed via direct file access (`gw_config`) — there is no pre-generated `openclaw.json` template. The CLI connects as a remote client with its own config directory at `data/cli-config/`.
 
 ## Known Issues
 
@@ -192,10 +193,10 @@ Domain filtering uses TLS SNI inspection — non-TLS protocols are categorically
 - Gateway service uses `dns: [172.28.0.2]` so Docker DNS forwards external queries to Envoy.
 - Gateway starts as root to add default route via Envoy, set iptables (NAT DNAT + FILTER DROP), then drops to `node` user via `gosu`.
 - Gateway has explicit `command` with `--bind lan --port 18789` to ensure LAN binding (required for Envoy to reach it over Docker network).
-- The CLI is not a compose service — it runs as a standalone `docker run --rm` container that connects to the gateway through Envoy's TLS ingress (`wss://envoy:443`) as a remote client. Config and device identity persist on the `openclaw-cli-config` named Docker volume. Trusts the self-signed cert via `NODE_EXTRA_CA_CERTS`, authenticates via device pairing.
+- The CLI is not a compose service — it runs as a standalone `docker run --rm` container on the `openclaw-egress` network, connecting to the gateway through Envoy's TLS ingress (`wss://envoy:443`) as a remote client. Config and device identity persist via bind mount at `data/cli-config/`. Trusts the self-signed cert via `NODE_EXTRA_CA_CERTS`, authenticates via device pairing. Uses `--entrypoint openclaw` to bypass entrypoint.sh (no `CAP_NET_ADMIN`, not on internal network).
 - No `HTTP_PROXY`/`HTTPS_PROXY` env vars — iptables DNAT provides transparent egress routing.
 - Gateway trusts Docker network CIDRs (`172.16.0.0/12`, `10.0.0.0/8`, `192.168.0.0/16`) via `trustedProxies` for correct client IP detection behind Envoy.
-- `setup.sh` handles image build, interactive onboarding, gateway config (via `gw_config`), CLI remote config (via `cli_config`), compose orchestration, and device pairing.
+- `setup.sh` handles image build, interactive onboarding (skippable via `--skip-onboarding`), gateway config (via `gw_config`), CLI remote config (via `./openclaw` wrapper), compose orchestration, and device pairing.
 - Self-signed TLS cert SANs include `DNS:localhost`, `DNS:openclaw-gateway`, `DNS:envoy`, `IP:172.28.0.2`, plus `--external-origin` hostname if set.
 
 ## Future Steps

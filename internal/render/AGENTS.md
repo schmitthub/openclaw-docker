@@ -35,7 +35,7 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 - Gateway has `cap_add: [NET_ADMIN]` for root-owned iptables + routing setup in entrypoint
 - Gateway service uses `dns: [172.28.0.2]` (Envoy's static IP for DNS forwarding)
 - Gateway has `init: true`, `restart: unless-stopped`, `HOME`/`TERM` env vars
-- CLI is not a compose service — runs as standalone `docker run --rm` connecting via `wss://envoy:443` as a remote client with config on `openclaw-cli-config` named volume
+- CLI is not a compose service — runs as standalone `docker run --rm` on `openclaw-egress` network connecting via `wss://envoy:443` as a remote client with config bind-mounted from `data/cli-config/`
 - Entrypoint runs as root: adds default route via Envoy, restores DOCKER_OUTPUT chain, derives internal subnet, sets iptables (loopback + subnet NAT skip, DNAT catch-all, FILTER DROP with subnet ACCEPT), then `gosu node`
 - Default route via Envoy required because `internal: true` has no gateway — kernel rejects external IPs before iptables can DNAT
 - DOCKER_OUTPUT chain jump restored after flushing nat OUTPUT — Docker DNS DNAT depends on it
@@ -50,7 +50,8 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 - No `HTTP_PROXY`/`HTTPS_PROXY` env vars — iptables DNAT is the transparent proxy mechanism
 - The security boundary is: Docker `internal: true` network + root-owned iptables DNAT + Envoy SNI whitelist + malware-blocking DNS
 - Dockerfile installs `iptables`, `iproute2`, `gosu`, `pnpm` (corepack), `bun` (install script to /usr/local), and OpenClaw (npm)
-- setup.sh mirrors official docker-setup.sh: onboarding, config management via `gw_config`/`cli_config` helpers, CLI remote config + device pairing, no pre-generated openclaw.json
+- setup.sh mirrors official docker-setup.sh: onboarding (skippable via `--skip-onboarding`), config management via `gw_config` helper + `./openclaw` wrapper for CLI config, device pairing, no pre-generated openclaw.json
+- `gw_config` passes `openclaw` as CMD (not `--entrypoint`) so entrypoint.sh runs; `./openclaw` wrapper uses `--entrypoint openclaw` (standalone container, no CAP_NET_ADMIN)
 - setup.sh must be Bash 3.2 compatible (macOS)
 - Defaults for config/workspace dirs use `/home/node/.openclaw`
 - TLS cert preserved across re-runs (idempotent)

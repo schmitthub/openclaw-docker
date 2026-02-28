@@ -406,21 +406,33 @@ require_cmd() {
   fi
 }
 
+SKIP_ONBOARDING=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-onboarding)
+      SKIP_ONBOARDING=true
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: ./setup.sh [--skip-onboarding]"
+      echo ""
+      echo "Options:"
+      echo "  --skip-onboarding  Skip interactive onboarding and reuse existing gateway config."
+      echo "  -h, --help         Show this help message."
+      exit 0
+      ;;
+    *)
+      fail "Unknown argument: $1"
+      ;;
+  esac
+done
+
 # Run an openclaw command against the gateway config (pre-start, local ops).
 # Uses compose to inherit volumes/env from the gateway service definition.
 # --entrypoint skips the iptables entrypoint; --no-deps skips starting envoy.
 gw_config() {
-  docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
-    --entrypoint openclaw openclaw-gateway "$@"
-}
-
-# Run an openclaw command against the CLI config (named volume, no network).
-cli_config() {
-  docker run --rm \
-    -v openclaw-cli-config:/home/node/.openclaw \
-    -e HOME=/home/node \
-    --entrypoint openclaw \
-    "$GATEWAY_IMAGE" "$@"
+  docker compose -f "$COMPOSE_FILE" run --rm --no-deps openclaw-gateway openclaw "$@"
 }
 
 # Read gateway token from existing openclaw config if available.
@@ -533,17 +545,22 @@ upsert_env "$ENV_FILE" \
 echo "==> Building images"
 docker compose -f "$COMPOSE_FILE" build
 
-echo ""
-echo "==> Onboarding (interactive)"
-echo "When prompted:"
-echo "  - Gateway bind: lan"
-echo "  - Gateway auth: token"
-echo "  - Tailscale exposure: Off"
-echo "  - Install Gateway daemon: No"
-echo ""
-# Start envoy (dependency) so DNS works, then run onboard.
-docker compose -f "$COMPOSE_FILE" run --rm \
-  --entrypoint openclaw openclaw-gateway onboard --no-install-daemon
+if [[ "$SKIP_ONBOARDING" == "true" ]]; then
+  echo ""
+  echo "==> Skipping onboarding (--skip-onboarding)"
+  echo "Reusing existing gateway config from $HOST_CONFIG_DIR/openclaw.json if available."
+else
+  echo ""
+  echo "==> Onboarding (interactive)"
+  echo "When prompted:"
+  echo "  - Gateway bind: lan"
+  echo "  - Gateway auth: token"
+  echo "  - Tailscale exposure: Off"
+  echo "  - Install Gateway daemon: No"
+  echo ""
+  # Start envoy (dependency) so DNS works, then run onboard.
+  docker compose -f "$COMPOSE_FILE" run --rm openclaw-gateway openclaw onboard --no-install-daemon
+fi
 
 # Ensure gateway mode is local (required for gateway to start).
 # Onboard should set this, but we enforce it as a safety net.
@@ -591,11 +608,11 @@ echo "==> CLI remote config"
 # The CLI runs as a standalone docker run container, connecting to the gateway
 # through Envoy's TLS ingress (wss://envoy:443). Config and device identity
 # persist on the openclaw-cli-config named volume.
-cli_config config set gateway.mode remote >/dev/null
-cli_config config set gateway.remote.url "wss://envoy:443" >/dev/null
-cli_config config set gateway.remote.transport direct >/dev/null
-cli_config config set gateway.remote.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null
-cli_config config set discovery.mdns.mode off >/dev/null
+"$ROOT_DIR/openclaw" config set gateway.mode remote >/dev/null
+"$ROOT_DIR/openclaw" config set gateway.remote.url "wss://envoy:443" >/dev/null
+"$ROOT_DIR/openclaw" config set gateway.remote.transport direct >/dev/null
+"$ROOT_DIR/openclaw" config set gateway.remote.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null
+"$ROOT_DIR/openclaw" config set discovery.mdns.mode off >/dev/null
 echo "CLI configured for remote access via Envoy."
 
 echo ""
@@ -606,7 +623,7 @@ docker compose -f "$COMPOSE_FILE" up -d
 echo "Waiting for gateway..."
 for i in $(seq 1 30); do
   if docker compose -f "$COMPOSE_FILE" exec -T openclaw-gateway \
-    openclaw devices list --token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null 2>&1; then
+    openclaw devices list >/dev/null 2>&1; then
     break
   fi
   sleep 1
@@ -619,7 +636,7 @@ echo "==> Pair CLI device"
 "$ROOT_DIR/openclaw" devices list >/dev/null 2>&1 || true
 sleep 2
 docker compose -f "$COMPOSE_FILE" exec -T openclaw-gateway \
-  openclaw devices approve --latest --token "$OPENCLAW_GATEWAY_TOKEN" 2>&1 || true
+  openclaw devices approve --latest 2>&1 || true
 
 echo ""
 echo "==> Provider setup (optional)"
@@ -985,14 +1002,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_PROJECT="$(basename "$ROOT_DIR")"
 GATEWAY_IMAGE="${COMPOSE_PROJECT}-openclaw-gateway"
-NETWORK="${COMPOSE_PROJECT}_openclaw-internal"
+NETWORK="${COMPOSE_PROJECT}_openclaw-egress"
 
 # Run CLI as a remote client, connecting to the gateway via Envoy TLS ingress.
-# Config and device identity persist on the openclaw-cli-config named volume.
+# Uses its own config directory (separate from the gateway config).
 ARGS=(
   docker run --rm
   --network "$NETWORK"
-  -v openclaw-cli-config:/home/node/.openclaw
+  -v "$ROOT_DIR/data/cli-config:/home/node/.openclaw"
   -v "$ROOT_DIR/compose/envoy/server-cert.pem:/etc/ssl/certs/openclaw-ca.pem:ro"
   -e HOME=/home/node
   -e NODE_EXTRA_CA_CERTS=/etc/ssl/certs/openclaw-ca.pem

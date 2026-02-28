@@ -41,7 +41,7 @@ All other tests use seeded manifests and don't require network access.
 - Compose gateway: command with --bind lan, init, restart, HOME/TERM env vars, dns: 172.28.0.2
 - Compose networking: Envoy static IP (172.28.0.2), IPAM subnet (172.28.0.0/24)
 - Env file variables (no proxy env vars — iptables DNAT handles egress, no NODE_OPTIONS, no dead vars)
-- Setup script permissions, shebang, onboarding flow, gw_config/cli_config helpers, config set calls (gateway.mode local, auth token, trustedProxies, controlUi.allowedOrigins, CLI remote config, mDNS off, device pairing), identity dir, openclaw-cli-config named volume
+- Setup script permissions, shebang, onboarding flow (with --skip-onboarding support), gw_config helper (passes openclaw as CMD, no --entrypoint), CLI config via ./openclaw wrapper, config set calls (gateway.mode local, auth token, trustedProxies, controlUi.allowedOrigins, CLI remote config, mDNS off, device pairing), identity dir
 - Custom options propagation (port, bind, allowed-domains)
 - Idempotency (two runs = identical output)
 - Full pipeline (npm resolve + generate)
@@ -49,7 +49,7 @@ All other tests use seeded manifests and don't require network access.
 - Envoy allowed domains propagation via --allowed-domains (additive to all hardcoded domains)
 - TLS cert generation (valid PEM, idempotent across re-runs, SANs include DNS:envoy and IP:172.28.0.2)
 - Entrypoint content (default route via Envoy, INTERNAL_SUBNET derivation, DOCKER_OUTPUT chain restore, iptables NAT loopback skip + subnet skip + DNAT to Envoy, FILTER OUTPUT DROP with subnet ACCEPT, Docker DNS, gosu node, executable)
-- CLI wrapper content (shebang, docker run --rm with --network + NODE_EXTRA_CA_CERTS + openclaw-cli-config named volume, "$@" passthrough, executable perms, no openclaw-cli references)
+- CLI wrapper content (shebang, docker run --rm with --network openclaw-egress + NODE_EXTRA_CA_CERTS + data/cli-config bind mount, "$@" passthrough, executable perms, no openclaw-cli references)
 
 ## Test Pattern
 

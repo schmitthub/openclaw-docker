@@ -62,7 +62,7 @@ seedManifest(t, setup.BaseDir)
 - Compose content: services (envoy, openclaw-gateway — no openclaw-cli), networks, build directive, cap_add NET_ADMIN, gateway command with --bind lan, init/restart, Envoy static IP (172.28.0.2), IPAM subnet, dns config
 - Envoy config: ingress listener, egress transparent TLS proxy (tls_inspector, sni_dynamic_forward_proxy, server_names, deny_cluster), DNS listener (dns_filter, Cloudflare 1.1.1.2/1.0.0.2, port 53 UDP), domain whitelist, WebSocket, use_remote_address, xff_num_trusted_hops; no HTTP CONNECT artifacts
 - Env file content: expected variables, no proxy env vars (HTTP_PROXY/HTTPS_PROXY/NO_PROXY removed), no NODE_OPTIONS
-- Setup script: executable perms, shebang, onboarding flow, gw_config/cli_config helpers, config set calls (gateway.mode local, auth token, trustedProxies, controlUi.allowedOrigins, CLI remote config, mDNS off, device pairing), identity dir, openclaw-cli-config named volume
-- CLI wrapper content: docker run --rm with --network, NODE_EXTRA_CA_CERTS, openclaw-cli-config named volume, no openclaw-cli references
+- Setup script: executable perms, shebang, onboarding flow (with --skip-onboarding support), gw_config helper (passes openclaw as CMD, no --entrypoint), CLI config via ./openclaw wrapper, config set calls (gateway.mode local, auth token, trustedProxies, controlUi.allowedOrigins, CLI remote config, mDNS off, device pairing), identity dir
+- CLI wrapper content: docker run --rm with --network openclaw-egress, NODE_EXTRA_CA_CERTS, data/cli-config bind mount, no openclaw-cli references
 - Custom options propagation (ports, bind, apt packages, allowed-domains)
 - Idempotency (two runs produce identical output)
