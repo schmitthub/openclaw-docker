@@ -493,6 +493,11 @@ func TestGenerateSquidConfContent(t *testing.T) {
 		"sslcrtd_program",
 		"deny all",
 		"openclaw.ai",
+		"api.anthropic.com",
+		"api.openai.com",
+		"generativelanguage.googleapis.com",
+		"openrouter.ai",
+		"api.x.ai",
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("squid.conf missing expected content: %q", s)

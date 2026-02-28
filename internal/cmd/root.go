@@ -83,7 +83,7 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		OpenClawGatewayToken: "",
 		OpenClawExtraMounts:  "",
 		OpenClawHomeVolume:   "",
-		SquidAllowedDomains:  "",
+		SquidAllowedDomains:  "api.anthropic.com,api.openai.com,generativelanguage.googleapis.com,openrouter.ai,api.x.ai",
 	}
 
 	if rootOpts.ConfigPath != "" {

@@ -39,9 +39,7 @@ openclaw_extra_mounts: ""
 openclaw_home_volume: ""
 
 # Comma-separated domains to whitelist in squid egress proxy.
-# Known providers: api.anthropic.com, api.openai.com,
-#   generativelanguage.googleapis.com, openrouter.ai, api.x.ai
-# openclaw.ai is always included.
-squid_allowed_domains: ""
+# openclaw.ai is always included. Set to "" to allow only openclaw.ai.
+squid_allowed_domains: "api.anthropic.com,api.openai.com,generativelanguage.googleapis.com,openrouter.ai,api.x.ai"
 `
 }
