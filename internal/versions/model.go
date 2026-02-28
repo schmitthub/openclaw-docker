@@ -9,23 +9,11 @@ type SemverParts struct {
 }
 
 type ReleaseMeta struct {
-	FullVersion   string              `json:"fullVersion"`
-	Version       SemverParts         `json:"version"`
-	DebianDefault string              `json:"debianDefault"`
-	AlpineDefault string              `json:"alpineDefault"`
-	Variants      map[string][]string `json:"variants"`
-}
-
-type Manifest struct {
-	Order   []string
-	Entries map[string]ReleaseMeta
+	FullVersion string      `json:"fullVersion"`
+	Version     SemverParts `json:"version"`
 }
 
 type ResolveOptions struct {
-	Requested     []string
-	DebianDefault string
-	AlpineDefault string
-	Variants      map[string][]string
-	Arches        []string
-	Debug         bool
+	Requested string
+	Debug     bool
 }

@@ -12,24 +12,22 @@ import (
 func newRenderCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "render",
-		Short: "Render Dockerfiles from versions manifest",
+		Short: "Render Dockerfile from versions manifest",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts, err := mergedOptions(cmd)
 			if err != nil {
 				return err
 			}
 
-			manifest, err := versions.ReadManifest(opts.VersionsFile)
+			meta, err := versions.ReadManifest(opts.VersionsFile)
 			if err != nil {
 				return err
 			}
 
 			if err := render.Generate(render.Options{
-				Manifest:             manifest,
+				Meta:                 meta,
 				OutputDir:            opts.OutputDir,
-				TemplatesDir:         opts.TemplatesDir,
 				Cleanup:              opts.Cleanup,
-				Requested:            opts.Versions,
 				DockerAptPackages:    opts.DockerAptPackages,
 				OpenClawConfigDir:    opts.OpenClawConfigDir,
 				OpenClawWorkspaceDir: opts.OpenClawWorkspaceDir,
@@ -47,7 +45,7 @@ func newRenderCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Rendered Dockerfiles to %s\n", opts.OutputDir)
+			fmt.Printf("Rendered deployment artifacts to %s\n", opts.OutputDir)
 			return nil
 		},
 	}

@@ -12,20 +12,16 @@ import (
 func newResolveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resolve",
-		Short: "Resolve OpenClaw versions and write versions manifest",
+		Short: "Resolve OpenClaw version and write manifest",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts, err := mergedOptions(cmd)
 			if err != nil {
 				return err
 			}
 
-			manifest, err := versions.Resolve(context.Background(), versions.ResolveOptions{
-				Requested:     opts.Versions,
-				DebianDefault: opts.DebianDefault,
-				AlpineDefault: opts.AlpineDefault,
-				Variants:      opts.Variants,
-				Arches:        opts.Arches,
-				Debug:         opts.Debug,
+			meta, err := versions.Resolve(context.Background(), versions.ResolveOptions{
+				Requested: opts.Version,
+				Debug:     opts.Debug,
 			})
 			if err != nil {
 				return err
@@ -35,11 +31,11 @@ func newResolveCmd() *cobra.Command {
 				return err
 			}
 
-			if err := versions.WriteManifest(opts.VersionsFile, manifest); err != nil {
+			if err := versions.WriteManifest(opts.VersionsFile, meta); err != nil {
 				return err
 			}
 
-			fmt.Printf("Wrote versions manifest: %s\n", opts.VersionsFile)
+			fmt.Printf("Resolved %s → %s\nWrote manifest: %s\n", opts.Version, meta.FullVersion, opts.VersionsFile)
 			return nil
 		},
 	}

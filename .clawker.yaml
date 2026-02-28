@@ -1,0 +1,63 @@
+# Clawker configuration for openclaw-docker
+# Go CLI that generates OpenClaw Docker deployment artifacts
+
+build:
+  image: "golang:1.25-bookworm"
+  packages:
+    - npm
+    - make
+    - curl
+    - git
+  instructions:
+    env:
+      GOPATH: /home/user/go
+      GOBIN: /home/user/go/bin
+      CGO_ENABLED: "0"
+    workdir: /workspace
+  user_run:
+    - cmd: "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+
+agent:
+  includes:
+    - AGENTS.md
+    - CLAUDE.md
+    - Makefile
+    - go.mod
+    - .golangci.yml
+  env:
+    OPENCLAW_DOCKER_DANGEROUS_INLINE: "true"
+  claude_code:
+    config:
+      strategy: copy
+    use_host_auth: true
+
+workspace:
+  default_mode: bind
+
+security:
+  firewall:
+    enable: true
+    add_domains:
+      # Go module proxy and checksum DB
+      - proxy.golang.org
+      - sum.golang.org
+      - storage.googleapis.com
+      # npm registry for version resolution
+      - registry.npmjs.org
+      # GitHub API for update checks and releases
+      - api.github.com
+      - github.com
+      # OpenClaw install script (used in generated Dockerfile, not at build time,
+      # but useful for validation)
+      - openclaw.ai
+  docker_socket: false
+  git_credentials:
+    forward_https: true
+    forward_ssh: true
+    copy_git_config: true
+
+loop:
+  max_loops: 30
+  timeout_minutes: 10
+  stagnation_threshold: 3
+  max_consecutive_test_loops: 3

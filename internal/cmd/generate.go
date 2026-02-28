@@ -13,7 +13,7 @@ import (
 func newGenerateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
-		Short: "Resolve versions and generate Dockerfiles",
+		Short: "Resolve version and generate Dockerfile",
 		RunE:  runGenerate,
 	}
 
@@ -26,13 +26,9 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	manifest, err := versions.Resolve(context.Background(), versions.ResolveOptions{
-		Requested:     opts.Versions,
-		DebianDefault: opts.DebianDefault,
-		AlpineDefault: opts.AlpineDefault,
-		Variants:      opts.Variants,
-		Arches:        opts.Arches,
-		Debug:         opts.Debug,
+	meta, err := versions.Resolve(context.Background(), versions.ResolveOptions{
+		Requested: opts.Version,
+		Debug:     opts.Debug,
 	})
 	if err != nil {
 		return err
@@ -42,14 +38,13 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if err := versions.WriteManifest(opts.VersionsFile, manifest); err != nil {
+	if err := versions.WriteManifest(opts.VersionsFile, meta); err != nil {
 		return err
 	}
 
 	if err := render.Generate(render.Options{
-		Manifest:             manifest,
+		Meta:                 meta,
 		OutputDir:            opts.OutputDir,
-		TemplatesDir:         opts.TemplatesDir,
 		Cleanup:              opts.Cleanup,
 		DockerAptPackages:    opts.DockerAptPackages,
 		OpenClawConfigDir:    opts.OpenClawConfigDir,
@@ -68,6 +63,6 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Printf("Generated Dockerfiles in %s\n", opts.OutputDir)
+	fmt.Printf("Generated deployment artifacts in %s\n", opts.OutputDir)
 	return nil
 }

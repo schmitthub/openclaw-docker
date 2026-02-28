@@ -10,91 +10,78 @@
 ![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/schmitthub/openclaw-docker)
 
-CLI for building custom OpenClaw Dockerfiles across multiple Linux variants and versions.
+CLI for generating OpenClaw Docker deployment artifacts.
 
 ## Overview
 
 - Standalone Go CLI (Cobra) with entrypoint in `main.go`.
-- Resolves OpenClaw versions from npm package `openclaw` (dist-tags first, semver fallback).
-- Lets you customize generated outputs via flags and explicit config file input.
-- Generates Dockerfiles per version/variant matrix at `<output>/<version>/<variant>/Dockerfile`.
-- Generates `compose.yaml` and `.env.openclaw` at the output root for runtime defaults and env-based overrides.
-- Focuses on empowering users to run OpenClaw via Docker with secure-by-default images.
-- Supports config file input via explicit `--config|-f` only (no discovery), with flags taking precedence.
-- Installs OpenClaw in images via:
-  `curl -fsSL https://openclaw.ai/install.sh | bash`
+- Resolves a single OpenClaw version from npm package `openclaw` (dist-tag or semver partial).
+- Generates a lean Dockerfile based on `node:22-bookworm` at `<output>/Dockerfile`.
+- Generates `compose.yaml`, `.env.openclaw`, and `setup.sh` at the output root.
+- Generated compose uses a `squid` proxy and an internal-only app network for egress control.
+- Installs OpenClaw in images via `curl -fsSL https://openclaw.ai/install.sh | bash`.
 - Includes CLI build metadata and a `version` command.
 - Checks for newer GitHub releases and shows upgrade hints after command execution.
-- Uses defensive write prompts by default for manifest and Dockerfile writes.
+- Uses defensive write prompts by default for overwrite operations.
+
+## Output Structure
+
+```
+<output>/
+├── Dockerfile         # Lean node:22-bookworm based Dockerfile
+├── compose.yaml       # Docker Compose with squid proxy
+├── .env.openclaw      # Environment variables for compose
+└── setup.sh           # Helper script for build/pull, token gen, compose up
+```
 
 ## Scope
 
-- In scope: generating and maintaining Dockerfiles that make OpenClaw easy to launch securely.
-- Out of scope: registry publishing workflows (for example Docker Hub/GHCR push automation and release pipelines).
-
-## Variants
-
-Current default variants are defined in the CLI defaults and include:
-
-- `trixie`
-- `bookworm`
-- `alpine3.23`
-- `alpine3.22`
+- In scope: generating deployment artifacts that make OpenClaw easy to launch securely.
+- Out of scope: registry publishing workflows (Docker Hub/GHCR push automation).
 
 ## Version and tag resolution
 
 - The CLI queries npm package metadata from `openclaw`.
-- Dist-tags (for example `latest`, `beta`) are resolved first.
-- If an input is not a dist-tag, semver matching is used.
-- Resolved versions are written to `$XDG_CACHE_HOME/openclaw-docker/versions.json`.
+- Accepts a single `--openclaw-version` value (dist-tag like `latest` or semver partial like `2026.2`).
+- Dist-tags are resolved first; if not a dist-tag, semver matching is used.
+- Resolved version metadata is written to `$XDG_CACHE_HOME/openclaw-docker/versions.json`.
 - If `XDG_CACHE_HOME` is not set, the fallback path is `~/.cache/openclaw-docker/versions.json`.
 
 ## Common commands
 
 ```bash
-# generate Dockerfiles (default versions: latest)
+# generate all artifacts (default version: latest)
 go run .
 
-# explicit tags/versions
-go run . --version latest --version beta
+# print CLI version
+go run . --version
+
+# explicit OpenClaw version
+go run . --openclaw-version latest
 
 # explicit output directory
-go run . --version latest --output ./dockerfiles
+go run . --openclaw-version latest --output ./openclaw-deploy
 
 # config file (explicit path only)
 go run . --config ./config.yaml
 
-# config + flag precedence override
-go run . --config ./config.yaml --output ./dockerfiles
-
-# approve each write interactively
-go run . --version latest --output ./dockerfiles
-
-# optional explicit commands
-go run . version
-go run . resolve --version latest
-go run . render --versions-file "$XDG_CACHE_HOME/openclaw-docker/versions.json" --output ./dockerfiles
-
 # skip per-write prompts (non-interactive/CI)
-go run . --dangerous-inline --version latest
+go run . --dangerous-inline --openclaw-version latest
 
-# bake setup defaults into generated Dockerfiles
+# bake setup defaults into generated Dockerfile
 go run . --dangerous-inline \
-  --version latest \
+  --openclaw-version latest \
   --docker-apt-packages "git-lfs ripgrep" \
-  --openclaw-config-dir /home/openclaw/.openclaw \
-  --openclaw-workspace-dir /home/openclaw/.openclaw/workspace \
+  --openclaw-config-dir /home/node/.openclaw \
+  --openclaw-workspace-dir /home/node/.openclaw/workspace \
   --openclaw-gateway-port 18789 \
   --openclaw-bridge-port 18790 \
   --openclaw-gateway-bind lan \
-  --openclaw-image openclaw:local \
-  --openclaw-gateway-token "" \
-  --openclaw-extra-mounts "" \
-  --openclaw-home-volume ""
+  --openclaw-image openclaw:local
 
-# explicit subcommands in non-interactive mode
-go run . --dangerous-inline resolve --version latest
-go run . --dangerous-inline render --versions-file "$XDG_CACHE_HOME/openclaw-docker/versions.json" --output ./dockerfiles
+# explicit subcommands
+go run . resolve --openclaw-version latest
+go run . render --versions-file "$XDG_CACHE_HOME/openclaw-docker/versions.json" --output ./openclaw-deploy
 ```
 
 ### Local PATH setup (direnv)
@@ -127,32 +114,34 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scr
 
 ### Output behavior
 
-- `--output|-o` controls Dockerfile output root.
+- `--output|-o` controls output root.
 - If omitted, output defaults to `./openclaw-deploy`.
 - Generation is additive and overwrite-only; existing generated files can be replaced, but directories are not deleted.
-- Output root includes generated `compose.yaml` and `.env.openclaw` for runtime compose usage.
+- Output root includes `Dockerfile`, `compose.yaml`, `.env.openclaw`, and `setup.sh`.
+- Generated `.env.openclaw` includes proxy defaults (`OPENCLAW_HTTP_PROXY`, `OPENCLAW_HTTPS_PROXY`, `OPENCLAW_NO_PROXY`).
+- Generated `compose.yaml` attaches `openclaw-gateway` and `openclaw-cli` to an internal-only network and routes egress through `squid`.
+- `setup.sh` handles image build/pull, gateway token generation, and compose orchestration.
 - `--cleanup` prints a defensive warning with the target directory and still does not perform deletes.
-- By default, each manifest and Dockerfile write prompts for confirmation.
+- By default, only overwrites prompt for confirmation; first-time file creates are written directly.
 - Use `--dangerous-inline` to bypass all write prompts (recommended for CI/non-interactive runs).
+
+### Compose usage
+
+- `compose.yaml` expects values from `.env.openclaw`.
+- Use the generated `setup.sh` or run Compose manually:
+
+```bash
+docker compose --env-file ./.env.openclaw -f ./compose.yaml up -d
+docker compose --env-file ./.env.openclaw -f ./compose.yaml down
+```
 
 ### Config behavior
 
 - Config file path must be passed explicitly using `--config` or `-f`.
 - No automatic config discovery is performed.
 - Precedence is: `flags > environment variables > config file > defaults`.
-- Dockerfile generation settings supported in config YAML:
-  - `docker_apt_packages`
-  - `openclaw_config_dir`
-  - `openclaw_workspace_dir`
-  - `openclaw_gateway_port`
-  - `openclaw_bridge_port`
-  - `openclaw_gateway_bind`
-  - `openclaw_image`
-  - `openclaw_gateway_token`
-  - `openclaw_extra_mounts`
-  - `openclaw_home_volume`
 - Environment variable overrides use the `OPENCLAW_DOCKER_` prefix (examples):
-  - `OPENCLAW_DOCKER_OUTPUT`, `OPENCLAW_DOCKER_VERSIONS_FILE`, `OPENCLAW_DOCKER_VERSIONS`
+  - `OPENCLAW_DOCKER_OUTPUT`, `OPENCLAW_DOCKER_VERSIONS_FILE`, `OPENCLAW_DOCKER_VERSION`
   - `OPENCLAW_DOCKER_DEBUG`, `OPENCLAW_DOCKER_CLEANUP`, `OPENCLAW_DOCKER_DANGEROUS_INLINE`
   - `OPENCLAW_DOCKER_OPENCLAW_CONFIG_DIR`, `OPENCLAW_DOCKER_OPENCLAW_WORKSPACE_DIR`
   - `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_PORT`, `OPENCLAW_DOCKER_OPENCLAW_BRIDGE_PORT`, `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_BIND`
@@ -164,9 +153,10 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scr
 - `internal/cmd`: Cobra root/commands
 - `internal/config`: YAML config loading
 - `internal/versions`: npm resolution + manifest IO
-- `internal/render`: additive Dockerfile generation (overwrite-only)
+- `internal/render`: Dockerfile, compose, env, and setup script generation
 - `internal/update`: release update checks and local cache state
-- `build/templates/docker-entrypoint.sh`: runtime entrypoint behavior
-- `build/templates/docker-init-firewall.sh`: optional firewall setup helper
-- `dockerfiles/`: one generated output location (when used as `--output`)
 
+## Future steps
+
+- Add a lightweight e2e check that validates generated `compose.yaml` with `.env.openclaw`.
+- Add docs/examples for operating multiple generated outputs in parallel (custom `--output` per deployment).

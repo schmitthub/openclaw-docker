@@ -54,17 +54,6 @@ func parseVersion(raw string) (*semver.Version, error) {
 	return parsed, nil
 }
 
-func sortVersionsDesc(values []string) {
-	sort.Slice(values, func(i, j int) bool {
-		left, leftErr := parseVersion(values[i])
-		right, rightErr := parseVersion(values[j])
-		if leftErr != nil || rightErr != nil {
-			return values[i] > values[j]
-		}
-		return left.GreaterThan(right)
-	})
-}
-
 func matchSemver(target string, candidates []string) (string, bool) {
 	for _, value := range candidates {
 		if value == target {

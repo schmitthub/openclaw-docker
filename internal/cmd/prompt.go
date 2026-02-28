@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,6 +12,17 @@ import (
 func confirmWrite(cmd *cobra.Command, dangerousInline bool, target string) error {
 	if dangerousInline {
 		return nil
+	}
+
+	info, err := os.Stat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("check write target %s: %w", target, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("write target is a directory: %s", target)
 	}
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "Warning! this operation will overwrite: %s\n", target)

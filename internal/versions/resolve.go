@@ -10,68 +10,42 @@ import (
 
 const npmPackageName = "openclaw"
 
-func Resolve(ctx context.Context, opts ResolveOptions) (Manifest, error) {
-	if len(opts.Requested) == 0 {
-		opts.Requested = []string{"latest"}
+func Resolve(ctx context.Context, opts ResolveOptions) (ReleaseMeta, error) {
+	requested := strings.TrimSpace(opts.Requested)
+	if requested == "" {
+		requested = "latest"
 	}
 
 	allVersions, err := npmVersions(ctx, npmPackageName)
 	if err != nil {
-		return Manifest{}, err
+		return ReleaseMeta{}, err
 	}
 
 	distTags, err := npmDistTags(ctx, npmPackageName)
 	if err != nil {
-		return Manifest{}, err
+		return ReleaseMeta{}, err
 	}
 
-	entries := make(map[string]ReleaseMeta)
-	order := make([]string, 0)
-
-	for _, requested := range opts.Requested {
-		requested = strings.TrimSpace(requested)
-		if requested == "" {
-			continue
+	resolved := ""
+	if distTag, ok := distTags[requested]; ok && distTag != "" {
+		resolved = distTag
+	} else {
+		matched, ok := matchSemver(requested, allVersions)
+		if !ok {
+			return ReleaseMeta{}, fmt.Errorf("cannot find version matching %q", requested)
 		}
-
-		resolved := ""
-		if distTag, ok := distTags[requested]; ok && distTag != "" {
-			resolved = distTag
-		} else {
-			matched, ok := matchSemver(requested, allVersions)
-			if !ok {
-				return Manifest{}, fmt.Errorf("cannot find version matching %q", requested)
-			}
-			resolved = matched
-		}
-
-		parts, err := toSemverParts(resolved)
-		if err != nil {
-			return Manifest{}, fmt.Errorf("parse resolved version %q: %w", resolved, err)
-		}
-
-		variants := make(map[string][]string)
-		for variant := range opts.Variants {
-			arches := make([]string, len(opts.Arches))
-			copy(arches, opts.Arches)
-			variants[variant] = arches
-		}
-
-		entries[resolved] = ReleaseMeta{
-			FullVersion:   resolved,
-			Version:       parts,
-			DebianDefault: opts.DebianDefault,
-			AlpineDefault: opts.AlpineDefault,
-			Variants:      variants,
-		}
+		resolved = matched
 	}
 
-	for version := range entries {
-		order = append(order, version)
+	parts, err := toSemverParts(resolved)
+	if err != nil {
+		return ReleaseMeta{}, fmt.Errorf("parse resolved version %q: %w", resolved, err)
 	}
-	sortVersionsDesc(order)
 
-	return Manifest{Order: order, Entries: entries}, nil
+	return ReleaseMeta{
+		FullVersion: resolved,
+		Version:     parts,
+	}, nil
 }
 
 func npmVersions(ctx context.Context, pkg string) ([]string, error) {

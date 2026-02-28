@@ -6,20 +6,17 @@ func DefaultTemplate() string {
 # Precedence: flags > environment variables > config file > defaults
 # Environment prefix: OPENCLAW_DOCKER_
 
-# Requested versions/tags to resolve (dist-tags or semver selectors)
-versions:
-  - latest
+# Requested version/tag to resolve (dist-tag or semver partial)
+version: latest
 
 # Where resolved version metadata is cached
 versions_file: ${XDG_CACHE_HOME}/openclaw-docker/versions.json
 
-# Template helper scripts source path used in generated Dockerfiles
-templates_dir: ./build/templates
-
 # Output root for generated artifacts:
-# - <output>/<version>/<variant>/Dockerfile
+# - <output>/Dockerfile
 # - <output>/compose.yaml
 # - <output>/.env.openclaw
+# - <output>/setup.sh
 output: ./openclaw-deploy
 
 # Cleanup is defensive-only (prints warning, no delete operations)
@@ -28,28 +25,12 @@ cleanup: false
 # Enable debug logging
 debug: false
 
-# Base distro defaults for generated variants
-debian_default: trixie
-alpine_default: alpine3.23
-
-# Variant matrix (keys are variant names; values are arch lists when needed)
-variants:
-  trixie: []
-  bookworm: []
-  alpine3.23: []
-  alpine3.22: []
-
-# Target architectures
-arches:
-  - amd64
-  - arm64v8
-
-# Additional apt packages for Debian-based generated Dockerfiles
+# Additional apt packages for the generated Dockerfile
 docker_apt_packages: ""
 
-# Default OpenClaw runtime settings baked into generated Dockerfiles/.env.openclaw
-openclaw_config_dir: /home/openclaw/.openclaw
-openclaw_workspace_dir: /home/openclaw/.openclaw/workspace
+# Default OpenClaw runtime settings baked into generated Dockerfile/.env.openclaw
+openclaw_config_dir: /home/node/.openclaw
+openclaw_workspace_dir: /home/node/.openclaw/workspace
 openclaw_gateway_port: "18789"
 openclaw_bridge_port: "18790"
 openclaw_gateway_bind: lan

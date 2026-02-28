@@ -29,8 +29,9 @@ import (
 
 // IsolatedDirs holds the four XDG-style directory paths created for the test.
 type IsolatedDirs struct {
-	Base  string // temp root (parent of all dirs)
-	Cache string // CLAWKER_CACHE_DIR
+	Base   string // temp root (parent of all dirs)
+	Cache  string //
+	Deploy string //
 }
 
 // Env is a unified test environment with isolated directories and optional

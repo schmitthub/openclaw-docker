@@ -8,26 +8,21 @@ import (
 )
 
 type FileConfig struct {
-	Versions             []string            `yaml:"versions"`
-	VersionsFile         string              `yaml:"versions_file"`
-	TemplatesDir         string              `yaml:"templates_dir"`
-	OutputDir            string              `yaml:"output"`
-	Cleanup              *bool               `yaml:"cleanup"`
-	Debug                *bool               `yaml:"debug"`
-	DebianDefault        string              `yaml:"debian_default"`
-	AlpineDefault        string              `yaml:"alpine_default"`
-	Variants             map[string][]string `yaml:"variants"`
-	Arches               []string            `yaml:"arches"`
-	DockerAptPackages    string              `yaml:"docker_apt_packages"`
-	OpenClawConfigDir    string              `yaml:"openclaw_config_dir"`
-	OpenClawWorkspaceDir string              `yaml:"openclaw_workspace_dir"`
-	OpenClawGatewayPort  string              `yaml:"openclaw_gateway_port"`
-	OpenClawBridgePort   string              `yaml:"openclaw_bridge_port"`
-	OpenClawGatewayBind  string              `yaml:"openclaw_gateway_bind"`
-	OpenClawImage        string              `yaml:"openclaw_image"`
-	OpenClawGatewayToken string              `yaml:"openclaw_gateway_token"`
-	OpenClawExtraMounts  string              `yaml:"openclaw_extra_mounts"`
-	OpenClawHomeVolume   string              `yaml:"openclaw_home_volume"`
+	Version              string `yaml:"version"`
+	VersionsFile         string `yaml:"versions_file"`
+	OutputDir            string `yaml:"output"`
+	Cleanup              *bool  `yaml:"cleanup"`
+	Debug                *bool  `yaml:"debug"`
+	DockerAptPackages    string `yaml:"docker_apt_packages"`
+	OpenClawConfigDir    string `yaml:"openclaw_config_dir"`
+	OpenClawWorkspaceDir string `yaml:"openclaw_workspace_dir"`
+	OpenClawGatewayPort  string `yaml:"openclaw_gateway_port"`
+	OpenClawBridgePort   string `yaml:"openclaw_bridge_port"`
+	OpenClawGatewayBind  string `yaml:"openclaw_gateway_bind"`
+	OpenClawImage        string `yaml:"openclaw_image"`
+	OpenClawGatewayToken string `yaml:"openclaw_gateway_token"`
+	OpenClawExtraMounts  string `yaml:"openclaw_extra_mounts"`
+	OpenClawHomeVolume   string `yaml:"openclaw_home_volume"`
 }
 
 func Load(path string) (FileConfig, error) {
