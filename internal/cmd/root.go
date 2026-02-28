@@ -39,14 +39,16 @@ func NewRootCmd(buildVersion, buildDate string) *cobra.Command {
 	showVersion := false
 
 	cmd := &cobra.Command{
-		Use:   "openclaw-docker",
-		Short: "Generate OpenClaw Dockerfiles",
+		Use:           "openclaw-docker",
+		Short:         "Generate OpenClaw Docker deployment artifacts",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if showVersion {
 				fmt.Fprint(cmd.OutOrStdout(), formatVersion(buildVersion, buildDate))
 				return nil
 			}
-			return runGenerate(cmd, args)
+			return cmd.Help()
 		},
 	}
 
@@ -74,7 +76,6 @@ func NewRootCmd(buildVersion, buildDate string) *cobra.Command {
 	cmd.AddCommand(newConfigCmd())
 	cmd.AddCommand(newGenerateCmd())
 	cmd.AddCommand(newResolveCmd())
-	cmd.AddCommand(newRenderCmd())
 
 	return cmd
 }

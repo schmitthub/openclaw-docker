@@ -45,7 +45,7 @@ func TestRenderProducesAllFiles(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -75,7 +75,7 @@ func TestRenderFlatOutput(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -109,7 +109,7 @@ func TestRenderDockerfileContent(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -162,7 +162,7 @@ func TestRenderDockerfileAptPackages(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -190,7 +190,7 @@ func TestRenderComposeContent(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -256,7 +256,7 @@ func TestRenderEnvContent(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -296,7 +296,7 @@ func TestRenderSetupScriptExecutable(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -339,7 +339,7 @@ func TestRenderCustomOptions(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -368,7 +368,7 @@ func TestRenderIdempotent(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	args := []string{
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -453,7 +453,7 @@ func TestRenderSquidConfContent(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -489,7 +489,7 @@ func TestRenderSquidConfAllowedDomains(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -520,7 +520,7 @@ func TestRenderOpenClawJSONContent(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -558,7 +558,7 @@ func TestRenderCAGeneration(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -588,7 +588,7 @@ func TestRenderCAGeneration(t *testing.T) {
 
 	// Re-run should preserve the same cert (idempotency).
 	result = h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -614,7 +614,7 @@ func TestRenderNginxConfContent(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -654,7 +654,7 @@ func TestRenderNginxCertGeneration(t *testing.T) {
 	outputDir := filepath.Join(setup.BaseDir, "deploy")
 
 	result := h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,
@@ -684,7 +684,7 @@ func TestRenderNginxCertGeneration(t *testing.T) {
 
 	// Re-run should preserve the same cert (idempotency).
 	result = h.Run(
-		"render",
+		"generate",
 		"--dangerous-inline",
 		"--versions-file", versionsFile,
 		"--output", outputDir,

@@ -24,8 +24,6 @@ func run() error {
 	buildVersion := build.Version
 
 	rootCmd := cmd.NewRootCmd(buildVersion, buildDate)
-	rootCmd.SilenceErrors = true
-	rootCmd.SilenceUsage = true
 	_, err := rootCmd.ExecuteC()
 	if err != nil {
 		return err

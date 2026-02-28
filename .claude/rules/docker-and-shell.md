@@ -65,7 +65,7 @@ Generation lives in `internal/render/render.go` and `internal/render/ca.go`:
 ## Validation
 ```bash
 # Generate artifacts
-go run . --openclaw-version latest --output ./openclaw-deploy --dangerous-inline
+go run . generate --openclaw-version latest --output ./openclaw-deploy --dangerous-inline
 
 # Validate compose
 docker compose --env-file ./openclaw-deploy/.env.openclaw -f ./openclaw-deploy/compose.yaml config

@@ -55,7 +55,7 @@ func CheckForUpdate(ctx context.Context, statePath, currentVersion, repo string)
 
 	current, err := semver.NewVersion(currentVersion)
 	if err != nil {
-		return nil, nil
+		return nil, nil //nolint:nilerr // unparseable versions are silently skipped
 	}
 
 	cached := readState(statePath)

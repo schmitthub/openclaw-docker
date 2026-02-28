@@ -40,7 +40,7 @@ When modifying this repository:
 ## Validation Expectations
 
 Before considering work complete, agents should:
-- Run `go run . --openclaw-version latest --output ./openclaw-deploy --dangerous-inline` after CLI/template changes.
+- Run `go run . generate --openclaw-version latest --output ./openclaw-deploy --dangerous-inline` after CLI/template changes.
 - Verify `openclaw-deploy/Dockerfile` exists (flat, not nested).
 - Validate generated compose with env file:
 	- `docker compose --env-file ./openclaw-deploy/.env.openclaw -f ./openclaw-deploy/compose.yaml config`
