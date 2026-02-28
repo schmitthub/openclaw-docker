@@ -50,10 +50,11 @@ security:
       # OpenClaw install script (used in generated Dockerfile, not at build time,
       # but useful for validation)
       - openclaw.ai
-  docker_socket: false
+  docker_socket: true
   git_credentials:
     forward_https: true
     forward_ssh: true
+    forward_gpg: true
     copy_git_config: true
 
 loop:
