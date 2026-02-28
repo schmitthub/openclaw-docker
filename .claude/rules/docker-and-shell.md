@@ -5,14 +5,19 @@ globs: ["**/Dockerfile*", "**/compose*.yaml", "**/.env*", "**/*.sh", "internal/r
 # Docker & Shell Artifact Rules
 
 ## Generated Artifacts
-The CLI generates four files to `<output>/` (default `./openclaw-deploy`):
+The CLI generates nine files to `<output>/` (default `./openclaw-deploy`):
 
 | File | Permissions | Purpose |
 |------|-------------|---------|
 | `Dockerfile` | 0644 | Lean `node:22-bookworm` image with OpenClaw installed via curl |
-| `compose.yaml` | 0644 | Squid proxy + gateway + cli services on internal network |
-| `setup.sh` | 0755 | Token gen, `docker compose build`, compose up orchestration |
+| `Dockerfile.squid` | 0644 | Custom squid image with `squid-openssl` for SSL bump support |
+| `compose.yaml` | 0644 | Squid proxy + gateway services on internal network |
+| `setup.sh` | 0755 | Token gen, openclaw.json seeding, compose up orchestration |
 | `.env.openclaw` | 0644 | Runtime env vars including proxy config |
+| `squid.conf` | 0644 | Squid proxy config with SSL bump + domain whitelist ACLs |
+| `openclaw.json` | 0644 | Pre-seeded gateway config (token placeholder replaced by setup.sh) |
+| `ca-cert.pem` | 0644 | Self-signed CA cert for squid SSL bump (mounted into both containers) |
+| `ca-key.pem` | 0600 | CA private key (mounted into squid only) |
 
 ## Dockerfile Conventions
 - Base: `node:22-bookworm` (matches official OpenClaw Docker pattern)
@@ -23,10 +28,12 @@ The CLI generates four files to `<output>/` (default `./openclaw-deploy`):
 - `OPENCLAW_DOCKER_APT_PACKAGES` ARG for optional packages
 
 ## Compose Conventions
-- Services build from local Dockerfile (`build: context: . / dockerfile: Dockerfile`)
+- Services build from local Dockerfiles (`Dockerfile` for gateway, `Dockerfile.squid` for squid)
 - No `image:` tag references — always local build
-- Squid proxy on `openclaw-egress` network for outbound traffic
-- Gateway and CLI on `openclaw-internal` (internal: true) network
+- Squid proxy on both `openclaw-internal` and `openclaw-egress` networks
+- Gateway on `openclaw-internal` (internal: true) only — all egress routes through squid
+- Squid SSL-bumps TLS with CA cert; gateway trusts it via `NODE_EXTRA_CA_CERTS`
+- Named volumes: `squid-log`, `squid-cache` for squid persistence
 - Env vars sourced from `.env.openclaw` via `env_file`
 
 ## Shell Script Conventions
@@ -37,12 +44,16 @@ The CLI generates four files to `<output>/` (default `./openclaw-deploy`):
 - Uses `docker compose -f "$COMPOSE_FILE" build` (not standalone docker build)
 
 ## Generation Code
-All generation lives in `internal/render/render.go`:
-- `Generate(opts)` — orchestrates all four files
+Generation lives in `internal/render/render.go` and `internal/render/ca.go`:
+- `Generate(opts)` — orchestrates all artifact writes
 - `dockerfileFor(opts)` — Dockerfile content via `fmt.Sprintf`
 - `composeFileContent()` — compose YAML as string-joined lines
 - `openClawEnvFileContent(opts)` — env file via `fmt.Sprintf`
 - `setupScriptContent(opts)` — setup.sh via `fmt.Sprintf`
+- `squidDockerfileContent()` — Dockerfile.squid content
+- `squidConfContent(opts)` — squid.conf with SSL bump + domain ACLs
+- `openClawJSONContent(opts)` — openclaw.json with gateway config
+- `generateCA(opts)` — CA cert+key generation (in `ca.go`, preserves existing across re-runs)
 
 ## Validation
 ```bash

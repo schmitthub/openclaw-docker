@@ -30,6 +30,7 @@ type runtimeOptions struct {
 	OpenClawGatewayToken string
 	OpenClawExtraMounts  string
 	OpenClawHomeVolume   string
+	SquidAllowedDomains  string
 }
 
 var rootOpts runtimeOptions
@@ -66,6 +67,7 @@ func NewRootCmd(buildVersion, buildDate string) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawGatewayToken, "openclaw-gateway-token", "", "Default OPENCLAW_GATEWAY_TOKEN value used in generated compose/.env.openclaw")
 	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawExtraMounts, "openclaw-extra-mounts", "", "Default OPENCLAW_EXTRA_MOUNTS value used in generated compose/.env.openclaw")
 	cmd.PersistentFlags().StringVar(&rootOpts.OpenClawHomeVolume, "openclaw-home-volume", "", "Default OPENCLAW_HOME_VOLUME value used in generated compose/.env.openclaw")
+	cmd.PersistentFlags().StringVar(&rootOpts.SquidAllowedDomains, "squid-allowed-domains", "", "Comma-separated domains to whitelist in squid egress proxy")
 	cmd.PersistentFlags().StringVar(&rootOpts.Version, "openclaw-version", "", "Requested OpenClaw version/tag (dist-tag like 'latest' or semver partial like '2026.2')")
 
 	cmd.AddCommand(newVersionCmd(buildVersion, buildDate))
@@ -98,6 +100,7 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		OpenClawGatewayToken: "",
 		OpenClawExtraMounts:  "",
 		OpenClawHomeVolume:   "",
+		SquidAllowedDomains:  "",
 	}
 
 	if rootOpts.ConfigPath != "" {
@@ -151,6 +154,9 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		if fileCfg.OpenClawHomeVolume != "" {
 			merged.OpenClawHomeVolume = fileCfg.OpenClawHomeVolume
 		}
+		if fileCfg.SquidAllowedDomains != "" {
+			merged.SquidAllowedDomains = fileCfg.SquidAllowedDomains
+		}
 	}
 
 	if err := applyEnvOverrides(&merged); err != nil {
@@ -202,6 +208,9 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	if cmd.Flags().Changed("openclaw-home-volume") {
 		merged.OpenClawHomeVolume = rootOpts.OpenClawHomeVolume
 	}
+	if cmd.Flags().Changed("squid-allowed-domains") {
+		merged.SquidAllowedDomains = rootOpts.SquidAllowedDomains
+	}
 	if cmd.Flags().Changed("openclaw-version") {
 		merged.Version = rootOpts.Version
 	}
@@ -219,6 +228,7 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	merged.OpenClawGatewayToken = strings.TrimSpace(merged.OpenClawGatewayToken)
 	merged.OpenClawExtraMounts = strings.TrimSpace(merged.OpenClawExtraMounts)
 	merged.OpenClawHomeVolume = strings.TrimSpace(merged.OpenClawHomeVolume)
+	merged.SquidAllowedDomains = strings.TrimSpace(merged.SquidAllowedDomains)
 
 	if merged.Version == "" {
 		merged.Version = "latest"
@@ -266,6 +276,9 @@ func applyEnvOverrides(opts *runtimeOptions) error {
 	}
 	if value, ok := getenvTrim("OPENCLAW_DOCKER_OPENCLAW_HOME_VOLUME"); ok {
 		opts.OpenClawHomeVolume = value
+	}
+	if value, ok := getenvTrim("OPENCLAW_DOCKER_SQUID_ALLOWED_DOMAINS"); ok {
+		opts.SquidAllowedDomains = value
 	}
 
 	if value, ok := getenvTrim("OPENCLAW_DOCKER_CLEANUP"); ok {

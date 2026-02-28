@@ -38,6 +38,7 @@ func newRenderCmd() *cobra.Command {
 				OpenClawGatewayToken: opts.OpenClawGatewayToken,
 				OpenClawExtraMounts:  opts.OpenClawExtraMounts,
 				OpenClawHomeVolume:   opts.OpenClawHomeVolume,
+				SquidAllowedDomains:  opts.SquidAllowedDomains,
 				ConfirmWrite: func(path string) error {
 					return confirmWrite(cmd, opts.DangerousInline, path)
 				},

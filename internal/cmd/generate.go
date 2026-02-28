@@ -34,10 +34,6 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if err := confirmWrite(cmd, opts.DangerousInline, opts.VersionsFile); err != nil {
-		return err
-	}
-
 	if err := versions.WriteManifest(opts.VersionsFile, meta); err != nil {
 		return err
 	}
@@ -56,6 +52,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		OpenClawGatewayToken: opts.OpenClawGatewayToken,
 		OpenClawExtraMounts:  opts.OpenClawExtraMounts,
 		OpenClawHomeVolume:   opts.OpenClawHomeVolume,
+		SquidAllowedDomains:  opts.SquidAllowedDomains,
 		ConfirmWrite: func(path string) error {
 			return confirmWrite(cmd, opts.DangerousInline, path)
 		},

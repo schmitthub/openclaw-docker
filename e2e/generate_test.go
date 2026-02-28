@@ -54,7 +54,7 @@ func TestRenderProducesAllFiles(t *testing.T) {
 		t.Fatalf("render failed: %v", result.Err)
 	}
 
-	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh"} {
+	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem"} {
 		path := filepath.Join(outputDir, name)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -205,7 +205,7 @@ func TestRenderComposeContent(t *testing.T) {
 	}
 	body := string(content)
 
-	for _, svc := range []string{"squid:", "openclaw-gateway:", "openclaw-cli:"} {
+	for _, svc := range []string{"squid:", "openclaw-gateway:"} {
 		if !strings.Contains(body, svc) {
 			t.Errorf("compose.yaml missing service %q", svc)
 		}
@@ -217,8 +217,8 @@ func TestRenderComposeContent(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(body, "ubuntu/squid:latest") {
-		t.Error("compose.yaml missing squid image reference")
+	if !strings.Contains(body, "dockerfile: Dockerfile.squid") {
+		t.Error("compose.yaml missing Dockerfile.squid build reference for squid")
 	}
 
 	if !strings.Contains(body, "dockerfile: Dockerfile") {
@@ -226,6 +226,20 @@ func TestRenderComposeContent(t *testing.T) {
 	}
 	if strings.Contains(body, "image: ${OPENCLAW_IMAGE}") {
 		t.Error("compose.yaml should not use image tag — should build from Dockerfile")
+	}
+
+	for _, s := range []string{
+		"squid.conf:/etc/squid/squid.conf",
+		"ca-cert.pem:/etc/squid/ca-cert.pem",
+		"ca-key.pem:/etc/squid/ca-key.pem",
+		"NODE_EXTRA_CA_CERTS",
+		"ca-cert.pem:/etc/ssl/certs/openclaw-ca.pem",
+		"squid-log:",
+		"squid-cache:",
+	} {
+		if !strings.Contains(body, s) {
+			t.Errorf("compose.yaml missing expected content: %q", s)
+		}
 	}
 }
 
@@ -400,8 +414,8 @@ func TestGenerateFullPipeline(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	// All four artifacts should exist.
-	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh"} {
+	// All artifacts should exist.
+	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem"} {
 		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
 			t.Errorf("expected %s to exist after generate: %v", name, err)
 		}
@@ -423,5 +437,166 @@ func TestGenerateFullPipeline(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "OPENCLAW_VERSION=") {
 		t.Error("Dockerfile missing OPENCLAW_VERSION")
+	}
+}
+
+func TestRenderSquidConfContent(t *testing.T) {
+	h := &harness.Harness{T: t}
+	setup := h.NewIsolatedFS()
+
+	versionsFile := seedManifest(t, setup.CacheDir)
+	outputDir := filepath.Join(setup.BaseDir, "deploy")
+
+	result := h.Run(
+		"render",
+		"--dangerous-inline",
+		"--versions-file", versionsFile,
+		"--output", outputDir,
+	)
+	if result.Err != nil {
+		t.Fatalf("render failed: %v", result.Err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(outputDir, "squid.conf"))
+	if err != nil {
+		t.Fatalf("read squid.conf: %v", err)
+	}
+	body := string(content)
+
+	for _, s := range []string{
+		"http_port 3128",
+		"ssl-bump",
+		"sslcrtd_program",
+		"deny all",
+		"openclaw.ai",
+	} {
+		if !strings.Contains(body, s) {
+			t.Errorf("squid.conf missing expected content: %q", s)
+		}
+	}
+}
+
+func TestRenderSquidConfAllowedDomains(t *testing.T) {
+	h := &harness.Harness{T: t}
+	setup := h.NewIsolatedFS()
+
+	versionsFile := seedManifest(t, setup.CacheDir)
+	outputDir := filepath.Join(setup.BaseDir, "deploy")
+
+	result := h.Run(
+		"render",
+		"--dangerous-inline",
+		"--versions-file", versionsFile,
+		"--output", outputDir,
+		"--squid-allowed-domains", "api.anthropic.com,api.openai.com",
+	)
+	if result.Err != nil {
+		t.Fatalf("render failed: %v", result.Err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(outputDir, "squid.conf"))
+	if err != nil {
+		t.Fatalf("read squid.conf: %v", err)
+	}
+	body := string(content)
+
+	for _, domain := range []string{"api.anthropic.com", "api.openai.com", "openclaw.ai"} {
+		if !strings.Contains(body, domain) {
+			t.Errorf("squid.conf missing allowed domain: %q", domain)
+		}
+	}
+}
+
+func TestRenderOpenClawJSONContent(t *testing.T) {
+	h := &harness.Harness{T: t}
+	setup := h.NewIsolatedFS()
+
+	versionsFile := seedManifest(t, setup.CacheDir)
+	outputDir := filepath.Join(setup.BaseDir, "deploy")
+
+	result := h.Run(
+		"render",
+		"--dangerous-inline",
+		"--versions-file", versionsFile,
+		"--output", outputDir,
+	)
+	if result.Err != nil {
+		t.Fatalf("render failed: %v", result.Err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(outputDir, "openclaw.json"))
+	if err != nil {
+		t.Fatalf("read openclaw.json: %v", err)
+	}
+	body := string(content)
+
+	for _, s := range []string{
+		`"gateway"`,
+		`"mode"`,
+		`"local"`,
+		`"bind"`,
+		`"auth"`,
+		`"token"`,
+		"__GATEWAY_TOKEN__",
+	} {
+		if !strings.Contains(body, s) {
+			t.Errorf("openclaw.json missing expected content: %q", s)
+		}
+	}
+}
+
+func TestRenderCAGeneration(t *testing.T) {
+	h := &harness.Harness{T: t}
+	setup := h.NewIsolatedFS()
+
+	versionsFile := seedManifest(t, setup.CacheDir)
+	outputDir := filepath.Join(setup.BaseDir, "deploy")
+
+	result := h.Run(
+		"render",
+		"--dangerous-inline",
+		"--versions-file", versionsFile,
+		"--output", outputDir,
+	)
+	if result.Err != nil {
+		t.Fatalf("render failed: %v", result.Err)
+	}
+
+	certPath := filepath.Join(outputDir, "ca-cert.pem")
+	keyPath := filepath.Join(outputDir, "ca-key.pem")
+
+	certData, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read ca-cert.pem: %v", err)
+	}
+	keyData, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("read ca-key.pem: %v", err)
+	}
+
+	if !strings.Contains(string(certData), "BEGIN CERTIFICATE") {
+		t.Error("ca-cert.pem missing PEM certificate header")
+	}
+	if !strings.Contains(string(keyData), "BEGIN EC PRIVATE KEY") {
+		t.Error("ca-key.pem missing PEM EC private key header")
+	}
+
+	// Re-run should preserve the same cert (idempotency).
+	result = h.Run(
+		"render",
+		"--dangerous-inline",
+		"--versions-file", versionsFile,
+		"--output", outputDir,
+	)
+	if result.Err != nil {
+		t.Fatalf("second render failed: %v", result.Err)
+	}
+
+	certData2, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read ca-cert.pem after second render: %v", err)
+	}
+	if string(certData) != string(certData2) {
+		t.Error("CA cert changed between renders — should be preserved")
 	}
 }

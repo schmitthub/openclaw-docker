@@ -21,6 +21,7 @@ flags > env vars (`OPENCLAW_DOCKER_*`) > config file > defaults
 | `docker_apt_packages` | `--docker-apt-packages` | `OPENCLAW_DOCKER_APT_PACKAGES` | `""` |
 | `openclaw_config_dir` | `--openclaw-config-dir` | `OPENCLAW_DOCKER_OPENCLAW_CONFIG_DIR` | `/home/node/.openclaw` |
 | `openclaw_gateway_port` | `--openclaw-gateway-port` | `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_PORT` | `18789` |
+| `squid_allowed_domains` | `--squid-allowed-domains` | `OPENCLAW_DOCKER_SQUID_ALLOWED_DOMAINS` | `""` |
 | `cleanup` | `--cleanup` | `OPENCLAW_DOCKER_CLEANUP` | `false` |
 | `debug` | `--debug` | `OPENCLAW_DOCKER_DEBUG` | `false` |
 
