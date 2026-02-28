@@ -35,20 +35,21 @@ All other tests use seeded manifests and don't require network access.
 
 - File existence and non-emptiness (9 artifacts in compose/<service>/ subdirs + root)
 - Output directory structure (compose/openclaw, compose/envoy; no squid/nginx)
-- Dockerfile content (base image, version, iptables, gosu, pnpm, bun, ENTRYPOINT, no proxy-preload)
+- Dockerfile content (base image, version, iptables, iproute2, gosu, pnpm, bun, ENTRYPOINT, no proxy-preload)
 - Custom apt packages
 - Compose services (envoy, openclaw-gateway, openclaw-cli), networks, build contexts, Envoy volumes, cap_add NET_ADMIN
-- Compose gateway: command with --bind lan, init, restart, HOME/TERM env vars
-- Compose CLI: entrypoint ["openclaw"], stdin_open, tty, BROWSER echo
-- Env file variables and proxy config (envoy:10000, no NODE_OPTIONS, no dead vars)
+- Compose gateway: command with --bind lan, init, restart, HOME/TERM env vars, dns: 172.28.0.2
+- Compose CLI: entrypoint ["openclaw"], stdin_open, tty, BROWSER echo, depends_on envoy, dns: 172.28.0.2
+- Compose networking: Envoy static IP (172.28.0.2), IPAM subnet (172.28.0.0/24)
+- Env file variables (no proxy env vars — iptables DNAT handles egress, no NODE_OPTIONS, no dead vars)
 - Setup script permissions, shebang, onboarding flow, config set calls (auth token, trustedProxies, controlUi.allowedOrigins, dangerouslyDisableDeviceAuth), identity dir
 - Custom options propagation (port, bind, allowed-domains)
 - Idempotency (two runs = identical output)
 - Full pipeline (npm resolve + generate)
-- Envoy config content (ingress/egress listeners, domain whitelist, CONNECT, WebSocket, XFF forwarding)
-- Envoy allowed domains propagation via --allowed-domains (additive to hardcoded clawhub.com, registry.npmjs.org)
+- Envoy config content (ingress listener, egress transparent TLS proxy with SNI filter chains, TLS Inspector, domain whitelist, deny_cluster, WebSocket, XFF forwarding, DNS listener with Cloudflare resolvers; no HTTP CONNECT artifacts)
+- Envoy allowed domains propagation via --allowed-domains (additive to all hardcoded domains)
 - TLS cert generation (valid PEM, idempotent across re-runs)
-- Entrypoint content (iptables OUTPUT DROP, Docker DNS, Envoy allow, gosu node, executable)
+- Entrypoint content (default route via Envoy, DOCKER_OUTPUT chain restore, iptables NAT DNAT to Envoy, FILTER OUTPUT DROP, Docker DNS, gosu node, executable)
 
 ## Test Pattern
 

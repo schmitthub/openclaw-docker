@@ -152,6 +152,7 @@ func TestGenerateDockerfileContent(t *testing.T) {
 		"SHARP_IGNORE_GLOBAL_LIBVIPS=1",
 		"/usr/local/bin/openclaw",
 		"iptables",
+		"iproute2",
 		"gosu",
 		"pnpm",
 		"bun",
@@ -264,6 +265,11 @@ func TestGenerateComposeContent(t *testing.T) {
 		"internal: true",
 		"cap_add:",
 		"NET_ADMIN",
+		// Envoy static IP and network config.
+		"ipv4_address: 172.28.0.2",
+		"subnet: 172.28.0.0/24",
+		// Gateway and CLI DNS via Envoy.
+		"172.28.0.2",
 		// Gateway service additions.
 		"init: true",
 		"restart: unless-stopped",
@@ -317,9 +323,6 @@ func TestGenerateEnvContent(t *testing.T) {
 		"OPENCLAW_GATEWAY_PORT=",
 		"OPENCLAW_BRIDGE_PORT=",
 		"OPENCLAW_GATEWAY_BIND=",
-		"HTTP_PROXY=http://envoy:10000",
-		"HTTPS_PROXY=http://envoy:10000",
-		"NO_PROXY=localhost,127.0.0.1,envoy,openclaw-gateway",
 	}
 	for _, v := range expectedVars {
 		if !strings.Contains(body, v) {
@@ -327,10 +330,14 @@ func TestGenerateEnvContent(t *testing.T) {
 		}
 	}
 
+	// Proxy env vars removed — iptables DNAT handles egress transparently.
 	// Dead vars and Node.js hacks should not be present.
-	for _, v := range []string{"OPENCLAW_EXTRA_MOUNTS", "OPENCLAW_HOME_VOLUME", "NODE_OPTIONS", "proxy-preload"} {
+	for _, v := range []string{
+		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+		"OPENCLAW_EXTRA_MOUNTS", "OPENCLAW_HOME_VOLUME", "NODE_OPTIONS", "proxy-preload",
+	} {
 		if strings.Contains(body, v) {
-			t.Errorf(".env.openclaw contains unexpected legacy var: %q", v)
+			t.Errorf(".env.openclaw contains unexpected var: %q", v)
 		}
 	}
 }
@@ -531,27 +538,49 @@ func TestGenerateEnvoyConfigContent(t *testing.T) {
 	body := string(content)
 
 	for _, s := range []string{
+		// Ingress listener (unchanged).
 		"ingress",
-		"egress",
 		"port_value: 443",
-		"port_value: 10000",
 		"openclaw_gateway",
-		"dynamic_forward_proxy",
 		"websocket",
-		"CONNECT",
-		"Forbidden",
-		"clawhub.com:443",
-		"registry.npmjs.org:443",
-		"api.anthropic.com:443",
-		"api.openai.com:443",
-		"generativelanguage.googleapis.com:443",
-		"openrouter.ai:443",
-		"api.x.ai:443",
 		"use_remote_address: true",
 		"xff_num_trusted_hops: 0",
+		// Egress listener (transparent TLS proxy with SNI filtering).
+		"egress",
+		"port_value: 10000",
+		"tls_inspector",
+		"sni_dynamic_forward_proxy",
+		"server_names",
+		"filter_chain_match",
+		"tcp_proxy",
+		"dynamic_forward_proxy_cluster",
+		"deny_cluster",
+		// DNS listener (forwards to Cloudflare malware-blocking resolvers).
+		"dns_filter",
+		"port_value: 53",
+		"protocol: UDP",
+		"1.1.1.2",
+		"1.0.0.2",
+		"resolver_timeout",
+		"max_pending_lookups",
+		// Hardcoded always-allowed domains (SNI format, no :443 suffix).
+		`"clawhub.com"`,
+		`"registry.npmjs.org"`,
+		`"api.anthropic.com"`,
+		`"api.openai.com"`,
+		`"generativelanguage.googleapis.com"`,
+		`"openrouter.ai"`,
+		`"api.x.ai"`,
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("envoy.yaml missing expected content: %q", s)
+		}
+	}
+
+	// HTTP CONNECT artifacts should not be present.
+	for _, s := range []string{"CONNECT", "Forbidden", "connect_matcher"} {
+		if strings.Contains(body, s) {
+			t.Errorf("envoy.yaml contains unexpected HTTP CONNECT artifact: %q", s)
 		}
 	}
 }
@@ -579,7 +608,8 @@ func TestGenerateEnvoyAllowedDomains(t *testing.T) {
 	}
 	body := string(content)
 
-	for _, domain := range []string{"api.anthropic.com:443", "custom.example.com:443", "clawhub.com:443"} {
+	// Domains appear in SNI format (bare domain, no :443 suffix).
+	for _, domain := range []string{`"api.anthropic.com"`, `"custom.example.com"`, `"clawhub.com"`} {
 		if !strings.Contains(body, domain) {
 			t.Errorf("envoy.yaml missing allowed domain: %q", domain)
 		}
@@ -673,6 +703,17 @@ func TestGenerateEntrypointContent(t *testing.T) {
 
 	for _, s := range []string{
 		"#!/bin/bash",
+		// Default route via Envoy (required for internal:true networks).
+		"ip route add default",
+		// NAT table: transparent DNAT redirect.
+		"iptables -t nat",
+		"DNAT",
+		"--to-destination",
+		":10000",
+		// Docker DNS: restore DOCKER_OUTPUT jump after flushing nat OUTPUT,
+		// otherwise Docker's port-53-to-high-port DNAT breaks and all DNS fails.
+		"DOCKER_OUTPUT",
+		// FILTER table: defense in depth.
 		"iptables -P OUTPUT DROP",
 		"127.0.0.11",
 		"getent hosts envoy",

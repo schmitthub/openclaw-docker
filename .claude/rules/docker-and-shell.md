@@ -11,26 +11,26 @@ The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized 
 | File | Permissions | Purpose |
 |------|-------------|---------|
 | `compose.yaml` | 0644 | 3 services: envoy, openclaw-gateway, openclaw-cli |
-| `.env.openclaw` | 0644 | Runtime env vars including proxy config |
+| `.env.openclaw` | 0644 | Runtime env vars (token, ports, bind settings) |
 | `setup.sh` | 0755 | Build, onboard, configure (via CLI), compose up |
 | `manifest.json` | 0644 | Resolved version metadata |
 
 **`compose/openclaw/`:**
 | File | Permissions | Purpose |
 |------|-------------|---------|
-| `Dockerfile` | 0644 | `node:22-bookworm` + `iptables` + `gosu` + `pnpm` + `bun` |
+| `Dockerfile` | 0644 | `node:22-bookworm` + `iptables` + `iproute2` + `gosu` + `pnpm` + `bun` |
 | `entrypoint.sh` | 0755 | Root-owned: sets iptables rules, then drops to `node` via `gosu` |
 
 **`compose/envoy/`:**
 | File | Permissions | Purpose |
 |------|-------------|---------|
-| `envoy.yaml` | 0644 | Envoy config: ingress (TLS+reverse proxy+XFF) + egress (CONNECT+domain ACL) |
+| `envoy.yaml` | 0644 | Envoy config: ingress (TLS+reverse proxy+XFF) + egress (transparent TLS proxy+SNI whitelist) |
 | `server-cert.pem` | 0644 | Self-signed TLS cert for Envoy ingress listener |
 | `server-key.pem` | 0600 | TLS key for Envoy ingress listener |
 
 ## Dockerfile Conventions
 - Base: `node:22-bookworm` (matches official OpenClaw Docker pattern)
-- Always installs `iptables` and `gosu` (required for egress security model)
+- Always installs `iptables`, `iproute2`, and `gosu` (required for egress security model)
 - `pnpm` installed via `corepack enable && corepack prepare pnpm@latest --activate`
 - `bun` installed via `BUN_INSTALL=/usr/local curl -fsSL https://bun.sh/install | bash` (global, accessible to node user)
 - OpenClaw installed via `npm install -g openclaw@<version>`
@@ -44,41 +44,52 @@ The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized 
 - No dev tools (zsh, git-delta, hadolint, fzf)
 
 ## Entrypoint Security Model
-The `entrypoint.sh` script enforces network-level egress isolation:
+The `entrypoint.sh` script enforces transparent egress isolation via iptables:
 1. Resolves Envoy's IP via `getent hosts envoy`
-2. Sets `iptables -P OUTPUT DROP` (default deny all outbound)
-3. Allows: loopback, Docker DNS (127.0.0.11:53 UDP), established/related, traffic to Envoy IP
-4. Drops to `node` user via `exec gosu node "$@"`
+2. Adds default route via Envoy (`ip route add default via $ENVOY_IP`) — required because `internal: true` networks have no gateway, so the kernel rejects connections to external IPs with "Network is unreachable" before iptables can DNAT them
+3. Flushes existing rules, then restores Docker's `DOCKER_OUTPUT` chain jump (Docker DNS uses this chain to DNAT port 53 to a high port — without it, all DNS fails)
+4. NAT table: DNAT all outbound TCP to Envoy's transparent proxy listener (skip Envoy's own IP to avoid loop)
+5. FILTER table: `OUTPUT DROP` default policy. Allows: loopback, Docker DNS (127.0.0.11:53 UDP), established/related, Envoy IP
+6. Drops to `node` user via `exec gosu node "$@"`
 
+Apps are unaware of the proxy — they connect normally and iptables rewrites the destination.
 The `node` user cannot modify iptables rules (requires `CAP_NET_ADMIN` which only root has).
-This is the primary egress enforcement — `HTTP_PROXY` env vars are convenience, not security.
+No `HTTP_PROXY`/`HTTPS_PROXY` env vars are needed — iptables DNAT handles all routing transparently.
 
 ## Compose Conventions
 - **3 services:** `envoy`, `openclaw-gateway`, `openclaw-cli`
-- Envoy (`envoyproxy/envoy:v1.33-latest`) is the sole ingress/egress proxy
-- Envoy publishes port 443 for ingress; egress listener on port 10000 (internal only)
+- Envoy (`envoyproxy/envoy:v1.33-latest`) is the sole ingress/egress proxy and DNS forwarder
+- Envoy has static IP `172.28.0.2` on `openclaw-internal` (IPAM subnet `172.28.0.0/24`)
+- Envoy runs as `user: "0"` (required for binding port 53)
+- Envoy publishes port 443 for ingress; egress listener on port 10000, DNS listener on port 53 UDP (internal only)
+- Gateway and CLI services use `dns: [172.28.0.2]` so Docker DNS forwards external queries to Envoy
 - Gateway builds from `compose/openclaw/` subdirectory
 - Gateway has explicit `command: ["openclaw", "gateway", "--bind", "lan", "--port", "18789"]` (ensures LAN binding for Docker network reachability)
-- Gateway uses `cap_add: [NET_ADMIN]` — required by root entrypoint for iptables setup
+- Gateway uses `cap_add: [NET_ADMIN]` — required by root entrypoint for iptables + routing setup
 - Gateway has `init: true`, `restart: unless-stopped`, `HOME`/`TERM` env vars
 - Gateway has no published ports — only accessible via Envoy on internal network
 - CLI service shares the same image but overrides `entrypoint: ["openclaw"]` for direct CLI access
 - CLI service has `stdin_open: true`, `tty: true`, `init: true`, `BROWSER: echo`
+- CLI service has `depends_on: [envoy]` (prevents static IP conflicts during startup)
 - CLI service has no restart policy (run-and-exit)
 - Envoy on both `openclaw-internal` (internal: true) and `openclaw-egress` networks
 - Gateway and CLI on `openclaw-internal` only — all egress routes through Envoy
-- `HTTPS_PROXY=http://envoy:10000` set as convenience for proxy-aware tools
+- No proxy env vars — iptables DNAT provides transparent egress routing
 - Env vars sourced from `.env.openclaw` via `env_file`
 
 ## Envoy Configuration
 - **Ingress listener (:443)**: TLS termination, `use_remote_address: true`, `xff_num_trusted_hops: 0`, WebSocket upgrade, reverse proxy to gateway
-- **Egress listener (:10000)**: HTTP CONNECT forward proxy with domain whitelist
-- Domain ACL via virtual host `domains` field matching `host:port` from CONNECT authority
-- **Hardcoded always-allowed:** `clawhub.com`, `registry.npmjs.org`
-- **Default AI providers (additive via `--allowed-domains`):** `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.x.ai`
-- Dynamic forward proxy cluster resolves allowed domains and establishes TCP tunnels
-- Unmatched domains get 403 Forbidden response
-- No SSL bump / MITM — TLS is end-to-end between gateway and API providers
+- **Egress listener (:10000)**: Transparent TLS proxy with SNI-based domain whitelist. All outbound TCP from gateway is DNAT'd here by iptables.
+- **DNS listener (:53 UDP)**: Forwards DNS queries to Cloudflare malware-blocking resolvers (1.1.1.2 / 1.0.0.2). Uses `envoy.filters.udp.dns_filter` with c-ares resolver. Required because Docker's embedded DNS cannot forward external queries on `internal: true` networks.
+- TLS Inspector listener filter reads SNI from ClientHello without terminating TLS (no MITM)
+- Domain ACL via `filter_chain_match.server_names` matching TLS SNI
+- Non-TLS traffic (SSH, plain HTTP, raw TCP) is categorically denied — no SNI to inspect
+- **Hardcoded always-allowed (infrastructure):** `clawhub.com`, `registry.npmjs.org`
+- **Hardcoded always-allowed (AI providers):** `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.x.ai`
+- `--allowed-domains` is additive to all hardcoded domains
+- `sni_dynamic_forward_proxy` resolves whitelisted domains via DNS and forwards to port 443
+- `deny_cluster` (STATIC, no endpoints) immediately resets non-whitelisted connections
+- SNI spoofing is useless: Envoy resolves the domain independently, connecting to the real IP
 
 ## Shell Script Conventions
 - Shebang: `#!/usr/bin/env bash`

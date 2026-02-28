@@ -80,7 +80,7 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		OpenClawGatewayBind:  "lan",
 		OpenClawImage:        "openclaw:local",
 		OpenClawGatewayToken: "",
-		AllowedDomains:       "api.anthropic.com,api.openai.com,generativelanguage.googleapis.com,openrouter.ai,api.x.ai",
+		AllowedDomains:       "",
 		ExternalOrigin:       "",
 	}
 

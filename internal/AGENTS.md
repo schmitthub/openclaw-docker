@@ -19,7 +19,7 @@ All packages under `internal/` are private to the CLI binary.
 - Config precedence: flags > env vars (`OPENCLAW_DOCKER_*`) > config file > defaults
 - `mergedOptions(cmd)` in `cmd/root.go` resolves the full option set
 - Write safety: `confirmWrite()` prompts unless `--dangerous-inline` is set
-- Generated Dockerfile uses `node` user from `node:22-bookworm` base, no ENTRYPOINT
+- Generated Dockerfile uses `node:22-bookworm` base with `ENTRYPOINT ["entrypoint.sh"]` (root → iptables → gosu node)
 
 ## Build & Test
 

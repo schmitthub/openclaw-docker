@@ -11,54 +11,91 @@ CLI that generates a hardened Docker Compose stack for [OpenClaw](https://opencl
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Host                                                               │
-│                                                                     │
-│   Browser ─── https://localhost ──┐                                 │
-│                                   │                                 │
-│   ┌───────────────────────────────┼───────────────────────────────┐ │
-│   │  openclaw-egress network      │                               │ │
-│   │                               ▼ :443                          │ │
-│   │                  ┌────────────────────────┐                   │ │
-│   │    Internet ◄──► │        Envoy           │                   │ │
-│   │   (allowed       │  • TLS termination     │                   │ │
-│   │    domains       │  • X-Forwarded-For     │                   │ │
-│   │    only)         │  • WebSocket upgrade   │                   │ │
-│   │                  │  • Domain whitelist ACL │                   │ │
-│   │                  └───────────┬────────────┘                   │ │
-│   └──────────────────────────────┼────────────────────────────────┘ │
-│   ┌──────────────────────────────┼────────────────────────────────┐ │
-│   │  openclaw-internal network   │  (internal: true — NO default  │ │
-│   │                              │   route to the internet)       │ │
-│   │                              ▼ :10000 (egress)                │ │
-│   │   ┌──────────────────────────────────────────┐                │ │
-│   │   │         openclaw-gateway                  │                │ │
-│   │   │  • OpenClaw + pnpm + bun                 │                │ │
-│   │   │  • iptables OUTPUT DROP (root-owned)     │                │ │
-│   │   │  • Only allows: loopback, DNS, Envoy     │                │ │
-│   │   │  • Drops to node user via gosu           │                │ │
-│   │   │  • HTTPS_PROXY=http://envoy:10000        │                │ │
-│   │   └──────────────────────────────────────────┘                │ │
-│   │                                                               │ │
-│   │   ┌──────────────────────────────────────────┐                │ │
-│   │   │         openclaw-cli                      │                │ │
-│   │   │  • Same image, entrypoint: ["openclaw"]  │                │ │
-│   │   │  • Config management (onboard, config)   │                │ │
-│   │   │  • Channel setup (WhatsApp, Telegram)    │                │ │
-│   │   │  • Run-and-exit (no restart policy)      │                │ │
-│   │   └──────────────────────────────────────────┘                │ │
-│   └───────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│   data/config/    ← bind-mounted config (openclaw.json, identity/) │
-│   data/workspace/ ← bind-mounted workspace                         │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  Host                                                                │
+│                                                                      │
+│   Browser ─── https://localhost ──┐                                  │
+│                                   │                                  │
+│   ┌───────────────────────────────┼────────────────────────────────┐ │
+│   │  openclaw-egress network      │                                │ │
+│   │                               ▼ :443                           │ │
+│   │                  ┌─────────────────────────┐                   │ │
+│   │    Internet ◄──► │     Envoy (172.28.0.2)  │                   │ │
+│   │   (whitelisted   │  Ingress:               │                   │ │
+│   │    domains       │  • TLS termination      │                   │ │
+│   │    only)         │  • X-Forwarded-For      │                   │ │
+│   │                  │  • WebSocket upgrade    │                   │ │
+│   │                  │                         │                   │ │
+│   │    Cloudflare    │  Egress (:10000):        │                   │ │
+│   │    1.1.1.2  ◄──  │  • TLS Inspector (SNI)  │                   │ │
+│   │    1.0.0.2       │  • Domain whitelist      │                   │ │
+│   │   (malware       │  • Non-TLS = DENIED     │                   │ │
+│   │    blocking)     │                         │                   │ │
+│   │                  │  DNS (:53 UDP):          │                   │ │
+│   │                  │  • Forwards to Cloudflare│                   │ │
+│   │                  │  • Malware domains blocked│                  │ │
+│   │                  └────────────┬────────────┘                   │ │
+│   └───────────────────────────────┼────────────────────────────────┘ │
+│   ┌───────────────────────────────┼────────────────────────────────┐ │
+│   │  openclaw-internal network    │  (internal: true — NO default  │ │
+│   │  subnet: 172.28.0.0/24       │   route to the internet)       │ │
+│   │                               ▼                                │ │
+│   │   ┌───────────────────────────────────────────┐                │ │
+│   │   │          openclaw-gateway                  │                │ │
+│   │   │  • OpenClaw + pnpm + bun                  │                │ │
+│   │   │  • dns: [172.28.0.2] (Envoy)              │                │ │
+│   │   │                                           │                │ │
+│   │   │  entrypoint.sh (root-owned, immutable):   │                │ │
+│   │   │  ┌───────────────────────────────────┐    │                │ │
+│   │   │  │ ip route: default via Envoy       │    │                │ │
+│   │   │  │ NAT:  ALL outbound TCP ──DNAT──►  │    │                │ │
+│   │   │  │       Envoy:10000 (transparent)   │    │                │ │
+│   │   │  │ FILTER: OUTPUT DROP (defense in   │    │                │ │
+│   │   │  │         depth, only Envoy allowed) │    │                │ │
+│   │   │  └───────────────────────────────────┘    │                │ │
+│   │   │  • Drops to node user via gosu            │                │ │
+│   │   │  • No proxy env vars — apps unaware       │                │ │
+│   │   └───────────────────────────────────────────┘                │ │
+│   │                                                                │ │
+│   │   ┌───────────────────────────────────────────┐                │ │
+│   │   │          openclaw-cli                      │                │ │
+│   │   │  • Same image, entrypoint: ["openclaw"]   │                │ │
+│   │   │  • dns: [172.28.0.2] (Envoy)              │                │ │
+│   │   │  • Config management (onboard, config)    │                │ │
+│   │   │  • Channel setup (WhatsApp, Telegram)     │                │ │
+│   │   │  • Run-and-exit (no restart policy)       │                │ │
+│   │   └───────────────────────────────────────────┘                │ │
+│   └────────────────────────────────────────────────────────────────┘ │
+│                                                                      │
+│   data/config/    ← bind-mounted config (openclaw.json, identity/)  │
+│   data/workspace/ ← bind-mounted workspace                          │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Three layers of egress defense:**
+## Threat Model
 
-1. **Docker `internal: true` network** — gateway has no default route to the internet. There is no IP to reach.
-2. **Root-owned iptables rules** — `OUTPUT DROP` default policy. Only loopback, Docker DNS, and Envoy are allowed. The `node` user cannot modify these rules.
-3. **Envoy domain whitelist** — egress listener only tunnels HTTPS CONNECT to whitelisted domains. Everything else gets 403. No SSL bump — TLS is end-to-end.
+**Threat:** Prompt injection coerces the AI agent into exfiltrating data. The agent can run any tool available in the container — `curl`, `wget`, `ncat`, `ssh`, raw sockets, subprocesses. It can use any port, any protocol, and target any destination. Application-level proxy settings (`HTTP_PROXY`) are trivially bypassed.
+
+**Defense-in-depth (four layers):**
+
+| Layer | Mechanism | What it stops | Bypassable by `node` user? |
+|-------|-----------|---------------|---------------------------|
+| **1. Network isolation** | Docker `internal: true` network | No default route to internet — no IP to reach | No |
+| **2. iptables DNAT** | NAT table redirects ALL outbound TCP to Envoy:10000 | Every TCP connection, regardless of tool/port/protocol, goes through Envoy | No (`CAP_NET_ADMIN` required, root only) |
+| **3. Envoy SNI whitelist** | TLS Inspector reads SNI from ClientHello, forwards only whitelisted domains | Non-whitelisted HTTPS, all non-TLS (SSH, HTTP, raw TCP) | No (Envoy runs separately, resolves DNS independently) |
+| **4. Malware-blocking DNS** | Cloudflare 1.1.1.2 / 1.0.0.2 (via Envoy DNS listener) | Known malware, phishing, and C2 domains blocked at DNS resolution | No (Envoy resolves DNS, containers cannot override) |
+
+**Why SNI spoofing doesn't work:** If an attacker forges the SNI to `api.anthropic.com` while connecting to `evil.com`'s IP, Envoy resolves `api.anthropic.com` via DNS independently and connects to the **real** IP — not the attacker's server.
+
+**DNS security:** All DNS resolution from internal containers is forwarded through Envoy to Cloudflare's malware-blocking resolvers (1.1.1.2 / 1.0.0.2). These resolvers refuse to resolve known malware, phishing, and command-and-control domains — adding a DNS-layer defense even for whitelisted TLS connections. Docker's embedded DNS cannot forward external queries on `internal: true` networks, so Envoy serves as the DNS forwarder on its static IP (172.28.0.2).
+
+**What gets blocked:**
+- `curl https://evil.com` — SNI `evil.com` not in whitelist → **BLOCKED**
+- `ssh user@evil.com` — no TLS, no SNI → **BLOCKED**
+- `ncat evil.com 4444` — no TLS, no SNI → **BLOCKED**
+- `curl http://evil.com` — no TLS, no SNI → **BLOCKED**
+- `python3 -c "import socket; s=socket.socket(); s.connect(('1.2.3.4', 443))"` — no SNI → **BLOCKED**
+- `curl https://api.anthropic.com` — SNI matches whitelist → **ALLOWED**
 
 ## Quickstart
 
@@ -100,10 +137,10 @@ openclaw-deploy/
 │   │   ├── server-cert.pem     # Self-signed TLS cert
 │   │   └── server-key.pem      # TLS private key
 │   └── openclaw/
-│       ├── Dockerfile           # node:22-bookworm + iptables + gosu + pnpm + bun
+│       ├── Dockerfile           # node:22-bookworm + iptables + iproute2 + gosu + pnpm + bun
 │       └── entrypoint.sh        # iptables setup, drops to node user
 ├── compose.yaml                 # 3 services: envoy, gateway, cli
-├── .env.openclaw                # Runtime env vars (token, ports, proxy)
+├── .env.openclaw                # Runtime env vars (token, ports, bind)
 ├── setup.sh                     # Interactive setup: build, onboard, configure, start
 └── manifest.json                # Resolved version metadata
 ```
@@ -165,20 +202,16 @@ docker compose -f ./openclaw-deploy/compose.yaml down
 
 ## Egress Domain Whitelist
 
-The Envoy egress proxy only allows HTTPS CONNECT to whitelisted domains. The default list includes:
+Envoy only forwards TLS connections with whitelisted SNI. All other traffic (non-TLS, non-whitelisted) is denied.
 
-**Always included (hardcoded):**
-- `clawhub.com`
-- `registry.npmjs.org`
+**Always included (hardcoded, cannot be removed):**
 
-**Default AI providers (configurable via `--allowed-domains`):**
-- `api.anthropic.com`
-- `api.openai.com`
-- `generativelanguage.googleapis.com`
-- `openrouter.ai`
-- `api.x.ai`
+| Category | Domains |
+|----------|---------|
+| Infrastructure | `clawhub.com`, `registry.npmjs.org` |
+| AI providers | `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.x.ai` |
 
-`--allowed-domains` is **additive** — the hardcoded domains are always present. To add custom domains:
+`--allowed-domains` is **additive** — all hardcoded domains are always present. To add custom domains:
 
 ```bash
 openclaw-docker generate \
