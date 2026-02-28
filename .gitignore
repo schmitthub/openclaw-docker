@@ -33,3 +33,5 @@ bin/
 openclawdockerfiles/
 openclaw-deploy/
 openclaw-docker
+
+.claude/settings.local.json
