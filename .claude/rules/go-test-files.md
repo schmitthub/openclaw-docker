@@ -59,9 +59,10 @@ seedManifest(t, setup.BaseDir)
 - Generated file existence and non-emptiness (9 artifacts)
 - Dockerfile content: base image, version, iptables, iproute2, gosu, pnpm, bun, ENTRYPOINT, no dev tools
 - Entrypoint content: default route via Envoy, DOCKER_OUTPUT chain restore, iptables NAT DNAT to Envoy, FILTER OUTPUT DROP, Docker DNS allow, gosu node, executable
-- Compose content: services (envoy, openclaw-gateway, openclaw-cli), networks, build directive, cap_add NET_ADMIN, gateway command with --bind lan, CLI entrypoint/stdin_open/tty, init/restart, Envoy static IP (172.28.0.2), IPAM subnet, dns config, depends_on
+- Compose content: services (envoy, openclaw-gateway — no openclaw-cli), networks, build directive, cap_add NET_ADMIN, gateway command with --bind lan, init/restart, Envoy static IP (172.28.0.2), IPAM subnet, dns config
 - Envoy config: ingress listener, egress transparent TLS proxy (tls_inspector, sni_dynamic_forward_proxy, server_names, deny_cluster), DNS listener (dns_filter, Cloudflare 1.1.1.2/1.0.0.2, port 53 UDP), domain whitelist, WebSocket, use_remote_address, xff_num_trusted_hops; no HTTP CONNECT artifacts
 - Env file content: expected variables, no proxy env vars (HTTP_PROXY/HTTPS_PROXY/NO_PROXY removed), no NODE_OPTIONS
-- Setup script: executable perms, shebang, onboarding flow, config set calls (auth token, trustedProxies, dangerouslyDisableDeviceAuth, controlUi.allowedOrigins), identity dir
+- Setup script: executable perms, shebang, onboarding flow, gw_config/cli_config helpers, config set calls (gateway.mode local, auth token, trustedProxies, controlUi.allowedOrigins, CLI remote config, mDNS off, device pairing), identity dir, openclaw-cli-config named volume
+- CLI wrapper content: docker run --rm with --network, NODE_EXTRA_CA_CERTS, openclaw-cli-config named volume, no openclaw-cli references
 - Custom options propagation (ports, bind, apt packages, allowed-domains)
 - Idempotency (two runs produce identical output)

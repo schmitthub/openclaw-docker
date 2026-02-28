@@ -9,14 +9,14 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 | `Generate(opts Options)` | Orchestrates all writes |
 | `dockerfileFor(opts)` | Dockerfile content (`fmt.Sprintf` template) |
 | `entrypointContent()` | entrypoint.sh: default route + iptables rules + gosu drop to node |
-| `composeFileContent(opts)` | compose.yaml (string-joined lines, 3 services) |
+| `composeFileContent(opts)` | compose.yaml (string-joined lines, 2 services: envoy + gateway) |
 | `openClawEnvFileContent(opts)` | .env.openclaw (`fmt.Sprintf` template) |
 | `setupScriptContent(opts)` | setup.sh (`fmt.Sprintf` template) |
 | `writeComposeArtifacts(opts)` | Writes compose.yaml + .env.openclaw |
 | `writeSetupScript(opts)` | Writes setup.sh with 0755 perms |
 | `writeEntrypoint(opts)` | Writes entrypoint.sh with 0755 perms |
 | `envoyConfigContent(opts)` | envoy.yaml with ingress + egress + DNS listeners |
-| `cliWrapperContent()` | openclaw CLI wrapper script (docker compose passthrough) |
+| `cliWrapperContent()` | openclaw CLI wrapper (standalone docker run, remote client via wss://envoy:443) |
 | `writeCLIWrapper(opts)` | Writes openclaw wrapper with 0755 perms |
 | `generateTLSCert(opts)` | Self-signed TLS cert for Envoy ingress (in `ca.go`) |
 
@@ -29,14 +29,14 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 ## Design Decisions
 
 - All content is built via `fmt.Sprintf` with Go string templates (not `text/template`)
-- Compose uses `build:` directive for gateway/CLI, stock `envoyproxy/envoy` image for Envoy
-- 3 compose services: `envoy`, `openclaw-gateway`, `openclaw-cli`
+- Compose uses `build:` directive for gateway, stock `envoyproxy/envoy` image for Envoy
+- 2 compose services: `envoy`, `openclaw-gateway`
 - Gateway has explicit `command: ["openclaw", "gateway", "--bind", "lan", "--port", "<port>"]` for LAN binding
 - Gateway has `cap_add: [NET_ADMIN]` for root-owned iptables + routing setup in entrypoint
-- Gateway and CLI services use `dns: [172.28.0.2]` (Envoy's static IP for DNS forwarding)
+- Gateway service uses `dns: [172.28.0.2]` (Envoy's static IP for DNS forwarding)
 - Gateway has `init: true`, `restart: unless-stopped`, `HOME`/`TERM` env vars
-- CLI service overrides `entrypoint: ["openclaw"]` with `stdin_open`, `tty`, `init`, `BROWSER: echo`, `depends_on: [envoy]`
-- Entrypoint runs as root: adds default route via Envoy, restores DOCKER_OUTPUT chain, sets iptables (NAT DNAT + FILTER DROP), then `gosu node`
+- CLI is not a compose service — runs as standalone `docker run --rm` connecting via `wss://envoy:443` as a remote client with config on `openclaw-cli-config` named volume
+- Entrypoint runs as root: adds default route via Envoy, restores DOCKER_OUTPUT chain, derives internal subnet, sets iptables (loopback + subnet NAT skip, DNAT catch-all, FILTER DROP with subnet ACCEPT), then `gosu node`
 - Default route via Envoy required because `internal: true` has no gateway — kernel rejects external IPs before iptables can DNAT
 - DOCKER_OUTPUT chain jump restored after flushing nat OUTPUT — Docker DNS DNAT depends on it
 - iptables NAT DNAT transparently redirects all outbound TCP to Envoy — no app proxy awareness needed
@@ -50,7 +50,7 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 - No `HTTP_PROXY`/`HTTPS_PROXY` env vars — iptables DNAT is the transparent proxy mechanism
 - The security boundary is: Docker `internal: true` network + root-owned iptables DNAT + Envoy SNI whitelist + malware-blocking DNS
 - Dockerfile installs `iptables`, `iproute2`, `gosu`, `pnpm` (corepack), `bun` (install script to /usr/local), and OpenClaw (npm)
-- setup.sh mirrors official docker-setup.sh: onboarding, CLI-based config management, no pre-generated openclaw.json
+- setup.sh mirrors official docker-setup.sh: onboarding, config management via `gw_config`/`cli_config` helpers, CLI remote config + device pairing, no pre-generated openclaw.json
 - setup.sh must be Bash 3.2 compatible (macOS)
 - Defaults for config/workspace dirs use `/home/node/.openclaw`
 - TLS cert preserved across re-runs (idempotent)
@@ -67,9 +67,9 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 │   └── openclaw/
 │       ├── Dockerfile           # 0644, node:22-bookworm + iptables + iproute2 + gosu + pnpm + bun
 │       └── entrypoint.sh        # 0755, default route + iptables setup + drop to node
-├── compose.yaml                 # 0644, envoy + gateway + cli
+├── compose.yaml                 # 0644, envoy + gateway (2 services)
 ├── .env.openclaw                # 0644, runtime env vars (token, ports, bind)
-├── setup.sh                     # 0755, build, onboard, configure, start
-├── openclaw                     # 0755, CLI wrapper (docker compose passthrough)
+├── setup.sh                     # 0755, build, onboard, configure, pair CLI, start
+├── openclaw                     # 0755, CLI wrapper (docker run, remote client via wss://envoy:443)
 └── manifest.json                # 0644, resolved version metadata
 ```

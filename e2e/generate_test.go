@@ -155,14 +155,20 @@ func TestGenerateDockerfileContent(t *testing.T) {
 		"iptables",
 		"iproute2",
 		"gosu",
+		"libsecret-tools",
 		"pnpm",
 		"bun",
+		"linuxbrew",
 		"COPY entrypoint.sh /usr/local/bin/entrypoint.sh",
 		`ENTRYPOINT ["entrypoint.sh"]`,
 		`CMD ["openclaw", "gateway", "--allow-unconfigured"]`,
 		"OPENCLAW_INSTALL_BROWSER",
 		"playwright-core/cli.js",
 		"xvfb",
+		// Matches official OpenClaw Dockerfile patterns.
+		"OPENCLAW_PREFER_PNPM=1",
+		"NODE_OPTIONS=--max-old-space-size=2048",
+		"PNPM_HOME=/home/node/.local/share/pnpm",
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(body, s) {
@@ -177,7 +183,6 @@ func TestGenerateDockerfileContent(t *testing.T) {
 		"hadolint",
 		"git-delta",
 		"proxy-preload",
-		"NODE_OPTIONS",
 		"openclaw.ai/install.sh",
 		"openclaw.mjs",
 	}
@@ -237,10 +242,15 @@ func TestGenerateComposeContent(t *testing.T) {
 	}
 	body := string(content)
 
-	for _, svc := range []string{"envoy:", "openclaw-gateway:", "openclaw-cli:"} {
+	for _, svc := range []string{"envoy:", "openclaw-gateway:"} {
 		if !strings.Contains(body, svc) {
 			t.Errorf("compose.yaml missing service %q", svc)
 		}
+	}
+
+	// CLI service removed — CLI runs as external docker run container.
+	if strings.Contains(body, "openclaw-cli:") {
+		t.Error("compose.yaml should not contain openclaw-cli service")
 	}
 
 	for _, net := range []string{"openclaw-internal:", "openclaw-egress:"} {
@@ -269,7 +279,7 @@ func TestGenerateComposeContent(t *testing.T) {
 		// Envoy static IP and network config.
 		"ipv4_address: 172.28.0.2",
 		"subnet: 172.28.0.0/24",
-		// Gateway and CLI DNS via Envoy.
+		// Gateway DNS via Envoy.
 		"172.28.0.2",
 		// Gateway service additions.
 		"init: true",
@@ -277,19 +287,26 @@ func TestGenerateComposeContent(t *testing.T) {
 		"HOME: /home/node",
 		"TERM: xterm-256color",
 		`command: ["openclaw", "gateway", "--bind", "lan"`,
-		// CLI service.
-		`entrypoint: ["openclaw"]`,
-		"stdin_open: true",
-		"tty: true",
-		"BROWSER: echo",
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("compose.yaml missing expected content: %q", s)
 		}
 	}
 
+	// CLI service removed — runs as standalone docker run.
+	for _, s := range []string{
+		"openclaw-cli:",
+		"stdin_open:",
+		"tty:",
+		"BROWSER: echo",
+	} {
+		if strings.Contains(body, s) {
+			t.Errorf("compose.yaml contains removed CLI service content: %q", s)
+		}
+	}
+
 	// Old squid/nginx artifacts and Node.js hacks should not be present.
-	for _, s := range []string{"nginx:", "squid:", "NODE_EXTRA_CA_CERTS", "squid-log", "squid-cache", "NODE_OPTIONS", "proxy-preload"} {
+	for _, s := range []string{"nginx:", "squid:", "squid-log", "squid-cache", "NODE_OPTIONS", "proxy-preload"} {
 		if strings.Contains(body, s) {
 			t.Errorf("compose.yaml contains unexpected legacy content: %q", s)
 		}
@@ -384,19 +401,40 @@ func TestGenerateSetupScriptExecutable(t *testing.T) {
 		"openssl rand",
 		"OPENCLAW_GATEWAY_TOKEN",
 		"up -d",
-		// Onboarding (mirrors official docker-setup.sh).
-		"openclaw-cli onboard --no-install-daemon",
-		// Config management via CLI.
+		// Onboarding via gateway service (not CLI).
+		"openclaw-gateway onboard --no-install-daemon",
+		// Gateway config helpers.
+		"gw_config",
+		"cli_config",
+		// Gateway mode safety net.
+		"gateway.mode local",
+		// Config management via gw_config.
 		"gateway.auth.token",
 		"ensure_control_ui_allowed_origins",
 		"controlUi.allowedOrigins",
 		"gateway.trustedProxies",
+		// CLI remote config.
+		"gateway.mode remote",
+		"gateway.remote.url",
+		"gateway.remote.transport",
+		"gateway.remote.token",
+		// mDNS disabled.
+		"discovery.mdns.mode off",
+		// Device pairing.
+		"devices approve --latest",
 		// Device identity directory.
 		"identity",
+		// CLI config on named volume.
+		"openclaw-cli-config",
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("setup.sh missing expected content: %q", s)
 		}
+	}
+
+	// CLI service references should not be present (removed from compose).
+	if strings.Contains(body, "openclaw-cli onboard") {
+		t.Error("setup.sh should not reference openclaw-cli service for onboarding")
 	}
 }
 
@@ -573,6 +611,11 @@ func TestGenerateEnvoyConfigContent(t *testing.T) {
 		`"generativelanguage.googleapis.com"`,
 		`"openrouter.ai"`,
 		`"api.x.ai"`,
+		// Homebrew (Linuxbrew).
+		`"github.com"`,
+		`"*.githubusercontent.com"`,
+		`"ghcr.io"`,
+		`"formulae.brew.sh"`,
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("envoy.yaml missing expected content: %q", s)
@@ -707,11 +750,17 @@ func TestGenerateEntrypointContent(t *testing.T) {
 		"#!/bin/bash",
 		// Default route via Envoy (required for internal:true networks).
 		"ip route add default",
+		// Internal subnet derivation (used for NAT skip + FILTER allow).
+		"INTERNAL_SUBNET",
 		// NAT table: transparent DNAT redirect.
 		"iptables -t nat",
 		"DNAT",
 		"--to-destination",
 		":10000",
+		// NAT: skip loopback (gateway health checks, local services).
+		"-o lo -j RETURN",
+		// NAT: skip internal subnet (container-to-container, service discovery).
+		"INTERNAL_SUBNET",
 		// Docker DNS: restore DOCKER_OUTPUT jump after flushing nat OUTPUT,
 		// otherwise Docker's port-53-to-high-port DNAT breaks and all DNS fails.
 		"DOCKER_OUTPUT",
@@ -720,6 +769,8 @@ func TestGenerateEntrypointContent(t *testing.T) {
 		"127.0.0.11",
 		"getent hosts envoy",
 		"ESTABLISHED,RELATED",
+		// FILTER: allow internal subnet.
+		`-d "$INTERNAL_SUBNET" -j ACCEPT`,
 		"gosu node",
 	} {
 		if !strings.Contains(body, s) {
@@ -764,12 +815,22 @@ func TestGenerateCLIWrapperContent(t *testing.T) {
 	}
 
 	for _, s := range []string{
-		"docker compose",
-		"run --rm openclaw-cli",
+		"docker run --rm",
+		"--network",
+		"--entrypoint openclaw",
+		"NODE_EXTRA_CA_CERTS",
+		"server-cert.pem",
+		"openclaw-cli-config",
 		`"$@"`,
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("openclaw wrapper missing expected content: %q", s)
 		}
+	}
+
+	// Should not reference the removed openclaw-cli compose service.
+	// (openclaw-cli-config is the named volume, which is fine.)
+	if strings.Contains(body, "openclaw-cli ") || strings.Contains(body, "openclaw-cli\"") {
+		t.Error("openclaw wrapper should not reference openclaw-cli compose service")
 	}
 }

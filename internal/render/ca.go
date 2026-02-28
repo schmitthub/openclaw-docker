@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -35,13 +37,32 @@ func generateTLSCert(opts Options) error {
 		return fmt.Errorf("generate serial number: %w", err)
 	}
 
+	dnsNames := []string{"localhost", "openclaw-gateway", "envoy"}
+	ipAddresses := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("172.28.0.2"), net.ParseIP("::1")}
+
+	// Include the external origin hostname in SANs for production deployments.
+	if opts.ExternalOrigin != "" {
+		origin := opts.ExternalOrigin
+		if !strings.Contains(origin, "://") {
+			origin = "https://" + origin
+		}
+		if u, err := url.Parse(origin); err == nil && u.Hostname() != "" {
+			host := u.Hostname()
+			if ip := net.ParseIP(host); ip != nil {
+				ipAddresses = append(ipAddresses, ip)
+			} else {
+				dnsNames = append(dnsNames, host)
+			}
+		}
+	}
+
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName: "openclaw-gateway",
 		},
-		DNSNames:    []string{"localhost", "openclaw-gateway"},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		DNSNames:    dnsNames,
+		IPAddresses: ipAddresses,
 		NotBefore:   time.Now(),
 		NotAfter:    time.Now().Add(2 * 365 * 24 * time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
