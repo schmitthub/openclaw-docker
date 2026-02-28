@@ -27,7 +27,7 @@ const testManifest = `{
 // resolving from npm. Returns the manifest path.
 func seedManifest(t *testing.T, baseDir string) string {
 	t.Helper()
-	path := filepath.Join(baseDir, "versions.json")
+	path := filepath.Join(baseDir, "manifest.json")
 	if err := os.WriteFile(path, []byte(testManifest), 0o644); err != nil {
 		t.Fatalf("seed manifest write: %v", err)
 	}
@@ -51,7 +51,21 @@ func TestGenerateProducesAllFiles(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem", "nginx.conf", "nginx-cert.pem", "nginx-key.pem", "versions.json"} {
+	for _, name := range []string{
+		"compose/openclaw/Dockerfile",
+		"compose/openclaw/openclaw.json",
+		"compose/squid/Dockerfile.squid",
+		"compose/squid/squid.conf",
+		"compose/squid/ca-cert.pem",
+		"compose/squid/ca-key.pem",
+		"compose/nginx/nginx.conf",
+		"compose/nginx/nginx-cert.pem",
+		"compose/nginx/nginx-key.pem",
+		"compose.yaml",
+		".env.openclaw",
+		"setup.sh",
+		"manifest.json",
+	} {
 		path := filepath.Join(outputDir, name)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -64,7 +78,7 @@ func TestGenerateProducesAllFiles(t *testing.T) {
 	}
 }
 
-func TestGenerateFlatOutput(t *testing.T) {
+func TestGenerateOutputStructure(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
@@ -80,19 +94,26 @@ func TestGenerateFlatOutput(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	// Dockerfile must be at the output root, not nested.
-	if _, err := os.Stat(filepath.Join(outputDir, "Dockerfile")); err != nil {
-		t.Fatal("Dockerfile not at output root")
-	}
-
-	// No version or variant subdirectories should exist.
+	// Only expected subdirectory is compose/.
 	entries, err := os.ReadDir(outputDir)
 	if err != nil {
 		t.Fatalf("read output dir: %v", err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() && entry.Name() != "compose" {
 			t.Errorf("unexpected subdirectory in output: %s", entry.Name())
+		}
+	}
+
+	// Verify compose service subdirectories exist.
+	for _, sub := range []string{"compose/openclaw", "compose/squid", "compose/nginx"} {
+		info, err := os.Stat(filepath.Join(outputDir, sub))
+		if err != nil {
+			t.Errorf("expected %s to exist: %v", sub, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("expected %s to be a directory", sub)
 		}
 	}
 }
@@ -113,7 +134,7 @@ func TestGenerateDockerfileContent(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "openclaw", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
@@ -166,7 +187,7 @@ func TestGenerateDockerfileAptPackages(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "openclaw", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
@@ -223,15 +244,17 @@ func TestGenerateComposeContent(t *testing.T) {
 
 	for _, s := range []string{
 		"nginx:alpine",
-		"nginx.conf:/etc/nginx/conf.d/default.conf",
-		"nginx-cert.pem:/etc/nginx/certs/server.pem",
-		"nginx-key.pem:/etc/nginx/certs/server-key.pem",
+		"compose/nginx/nginx.conf:/etc/nginx/conf.d/default.conf",
+		"compose/nginx/nginx-cert.pem:/etc/nginx/certs/server.pem",
+		"compose/nginx/nginx-key.pem:/etc/nginx/certs/server-key.pem",
 		"443:443",
-		"squid.conf:/etc/squid/squid.conf",
-		"ca-cert.pem:/etc/squid/ca-cert.pem",
-		"ca-key.pem:/etc/squid/ca-key.pem",
+		"compose/squid/squid.conf:/etc/squid/squid.conf",
+		"compose/squid/ca-cert.pem:/etc/squid/ca-cert.pem",
+		"compose/squid/ca-key.pem:/etc/squid/ca-key.pem",
 		"NODE_EXTRA_CA_CERTS",
-		"ca-cert.pem:/etc/ssl/certs/openclaw-ca.pem",
+		"compose/squid/ca-cert.pem:/etc/ssl/certs/openclaw-ca.pem",
+		"context: ./compose/squid",
+		"context: ./compose/openclaw",
 		"squid-log:",
 		"squid-cache:",
 	} {
@@ -340,7 +363,7 @@ func TestGenerateCustomOptions(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	dockerfile, _ := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
+	dockerfile, _ := os.ReadFile(filepath.Join(outputDir, "compose", "openclaw", "Dockerfile"))
 
 	if !strings.Contains(string(dockerfile), "OPENCLAW_GATEWAY_PORT=9999") {
 		t.Error("Dockerfile missing custom gateway port")
@@ -368,7 +391,7 @@ func TestGenerateIdempotent(t *testing.T) {
 		t.Fatalf("first generate failed: %v", result.Err)
 	}
 
-	first, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
+	first, err := os.ReadFile(filepath.Join(outputDir, "compose", "openclaw", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read first Dockerfile: %v", err)
 	}
@@ -379,7 +402,7 @@ func TestGenerateIdempotent(t *testing.T) {
 		t.Fatalf("second generate failed: %v", result.Err)
 	}
 
-	second, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
+	second, err := os.ReadFile(filepath.Join(outputDir, "compose", "openclaw", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read second Dockerfile: %v", err)
 	}
@@ -408,15 +431,29 @@ func TestGenerateFullPipeline(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	// All artifacts should exist including versions.json in output dir.
-	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem", "nginx.conf", "nginx-cert.pem", "nginx-key.pem", "versions.json"} {
+	// All artifacts should exist including manifest.json in output dir.
+	for _, name := range []string{
+		"compose/openclaw/Dockerfile",
+		"compose/openclaw/openclaw.json",
+		"compose/squid/Dockerfile.squid",
+		"compose/squid/squid.conf",
+		"compose/squid/ca-cert.pem",
+		"compose/squid/ca-key.pem",
+		"compose/nginx/nginx.conf",
+		"compose/nginx/nginx-cert.pem",
+		"compose/nginx/nginx-key.pem",
+		"compose.yaml",
+		".env.openclaw",
+		"setup.sh",
+		"manifest.json",
+	} {
 		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
 			t.Errorf("expected %s to exist after generate: %v", name, err)
 		}
 	}
 
 	// Dockerfile should contain a real resolved version (not empty or "latest").
-	content, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "openclaw", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
@@ -444,7 +481,7 @@ func TestGenerateSquidConfContent(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "squid.conf"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "squid", "squid.conf"))
 	if err != nil {
 		t.Fatalf("read squid.conf: %v", err)
 	}
@@ -480,7 +517,7 @@ func TestGenerateSquidConfAllowedDomains(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "squid.conf"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "squid", "squid.conf"))
 	if err != nil {
 		t.Fatalf("read squid.conf: %v", err)
 	}
@@ -509,7 +546,7 @@ func TestGenerateOpenClawJSONContent(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "openclaw.json"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "openclaw", "openclaw.json"))
 	if err != nil {
 		t.Fatalf("read openclaw.json: %v", err)
 	}
@@ -546,8 +583,8 @@ func TestGenerateCAGeneration(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	certPath := filepath.Join(outputDir, "ca-cert.pem")
-	keyPath := filepath.Join(outputDir, "ca-key.pem")
+	certPath := filepath.Join(outputDir, "compose", "squid", "ca-cert.pem")
+	keyPath := filepath.Join(outputDir, "compose", "squid", "ca-key.pem")
 
 	certData, err := os.ReadFile(certPath)
 	if err != nil {
@@ -600,7 +637,7 @@ func TestGenerateNginxConfContent(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "nginx.conf"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "nginx", "nginx.conf"))
 	if err != nil {
 		t.Fatalf("read nginx.conf: %v", err)
 	}
@@ -639,8 +676,8 @@ func TestGenerateNginxCertGeneration(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	certPath := filepath.Join(outputDir, "nginx-cert.pem")
-	keyPath := filepath.Join(outputDir, "nginx-key.pem")
+	certPath := filepath.Join(outputDir, "compose", "nginx", "nginx-cert.pem")
+	keyPath := filepath.Join(outputDir, "compose", "nginx", "nginx-key.pem")
 
 	certData, err := os.ReadFile(certPath)
 	if err != nil {

@@ -6,7 +6,7 @@ End-to-end generation tests. Package name: `test`.
 
 | File | Purpose |
 |------|---------|
-| `generate_test.go` | 16 tests covering render and full generate pipeline |
+| `generate_test.go` | 16 tests covering generate pipeline |
 | `harness/harness.go` | Test harness: isolated FS + Cobra CLI execution |
 
 ## Running
@@ -14,15 +14,16 @@ End-to-end generation tests. Package name: `test`.
 ```bash
 go test ./e2e/...          # all e2e tests
 go test ./e2e/... -v       # verbose
-go test ./e2e/... -run TestRenderDockerfileContent  # single test
+go test ./e2e/... -run TestGenerateDockerfileContent  # single test
 ```
 
 ## Test Manifest Seeding
 
-Tests that use `render` (not `generate`) seed a manifest via `seedManifest(t, cacheDir)`:
+Tests seed a manifest via `seedManifest(t, baseDir)` which writes `manifest.json`
+and sets `OPENCLAW_DOCKER_VERSIONS_FILE` env var to bypass npm resolution:
 ```go
-versionsFile := seedManifest(t, setup.CacheDir)
-// Writes test JSON to <cacheDir>/openclaw-docker/versions.json
+seedManifest(t, setup.BaseDir)
+// Writes manifest.json to baseDir, sets env var
 ```
 
 ## Tests That Need npm
@@ -32,15 +33,16 @@ All other tests use seeded manifests and don't require network access.
 
 ## Current Test Coverage
 
-- File existence and non-emptiness (12 artifacts including CA, nginx certs)
+- File existence and non-emptiness (13 artifacts in compose/<service>/ subdirs + root)
+- Output directory structure (compose/openclaw, compose/squid, compose/nginx)
 - Dockerfile content (base image, version, forbidden content)
 - Custom apt packages
-- Compose services (nginx, squid, gateway), networks, nginx/squid mounts, NODE_EXTRA_CA_CERTS, named volumes
+- Compose services (nginx, squid, gateway), networks, build contexts, volume mounts, NODE_EXTRA_CA_CERTS, named volumes
 - Env file variables and proxy config
 - Setup script permissions, shebang, expected content
 - Custom options propagation (port, bind)
 - Idempotency (two runs = identical output)
-- Full pipeline (npm resolve + render)
+- Full pipeline (npm resolve + generate)
 - Squid.conf content (SSL bump, sslcrtd_program, deny all, openclaw.ai)
 - Squid allowed domains propagation via --squid-allowed-domains
 - openclaw.json content (gateway, mode, bind, auth, token placeholder)
@@ -54,14 +56,13 @@ All other tests use seeded manifests and don't require network access.
 func TestExample(t *testing.T) {
     h := &harness.Harness{T: t}
     setup := h.NewIsolatedFS()
-    versionsFile := seedManifest(t, setup.CacheDir)
+    seedManifest(t, setup.BaseDir)
     outputDir := filepath.Join(setup.BaseDir, "deploy")
-    result := h.Run("render", "--dangerous-inline",
-        "--versions-file", versionsFile,
+    result := h.Run("generate", "--dangerous-inline",
         "--output", outputDir,
     )
     if result.Err != nil {
-        t.Fatalf("render failed: %v", result.Err)
+        t.Fatalf("generate failed: %v", result.Err)
     }
     // assert on generated files in outputDir
 }

@@ -64,7 +64,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 
 	// Write manifest to output dir so subsequent runs can detect what
 	// version is already rendered there.
-	manifestPath := filepath.Join(opts.OutputDir, "versions.json")
+	manifestPath := filepath.Join(opts.OutputDir, "manifest.json")
 	if err := versions.WriteManifest(manifestPath, meta); err != nil {
 		return err
 	}

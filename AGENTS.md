@@ -23,10 +23,23 @@ Primary goals:
 
 ```
 <output>/
-├── Dockerfile         # Lean node:22-bookworm based Dockerfile
-├── compose.yaml       # Docker Compose with squid proxy
-├── .env.openclaw      # Environment variables for compose
-└── setup.sh           # Helper script for build/pull, token gen, compose up
+├── compose/
+│   ├── nginx/
+│   │   ├── nginx.conf         # HTTPS reverse proxy with WebSocket support
+│   │   ├── nginx-cert.pem     # TLS server cert signed by CA
+│   │   └── nginx-key.pem      # TLS server key
+│   ├── openclaw/
+│   │   ├── Dockerfile          # Lean node:22-bookworm based Dockerfile
+│   │   └── openclaw.json       # Pre-seeded gateway config (token placeholder)
+│   └── squid/
+│       ├── Dockerfile.squid    # Custom squid image with squid-openssl
+│       ├── squid.conf          # Squid proxy config with SSL bump + domain ACLs
+│       ├── ca-cert.pem         # Self-signed CA cert for SSL bump
+│       └── ca-key.pem          # CA private key
+├── compose.yaml                # Docker Compose with nginx, squid, gateway
+├── .env.openclaw               # Environment variables for compose
+├── manifest.json               # Resolved version metadata
+└── setup.sh                    # Token gen, config seeding, compose up
 ```
 
 ## Contribution Guidelines for Agents
@@ -41,7 +54,7 @@ When modifying this repository:
 
 Before considering work complete, agents should:
 - Run `go run . generate --openclaw-version latest --output ./openclaw-deploy --dangerous-inline` after CLI/template changes.
-- Verify `openclaw-deploy/Dockerfile` exists (flat, not nested).
+- Verify `openclaw-deploy/compose/openclaw/Dockerfile` exists.
 - Validate generated compose with env file:
 	- `docker compose --env-file ./openclaw-deploy/.env.openclaw -f ./openclaw-deploy/compose.yaml config`
 - Verify `openclaw-deploy/setup.sh` exists and is executable.

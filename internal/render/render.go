@@ -32,8 +32,17 @@ func Generate(opts Options) error {
 		return fmt.Errorf("output directory is required")
 	}
 
-	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
-		return fmt.Errorf("create output directory: %w", err)
+	// Create output root and compose service subdirectories.
+	for _, sub := range []string{
+		"",
+		"compose/openclaw",
+		"compose/squid",
+		"compose/nginx",
+	} {
+		dir := filepath.Join(opts.OutputDir, sub)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create directory %q: %w", dir, err)
+		}
 	}
 
 	if opts.Cleanup {
@@ -44,7 +53,7 @@ func Generate(opts Options) error {
 		)
 	}
 
-	dockerfilePath := filepath.Join(opts.OutputDir, "Dockerfile")
+	dockerfilePath := filepath.Join(opts.OutputDir, "compose", "openclaw", "Dockerfile")
 	if opts.ConfirmWrite != nil {
 		if err := opts.ConfirmWrite(dockerfilePath); err != nil {
 			return err
@@ -146,9 +155,9 @@ func composeFileContent() string {
 		"    ports:",
 		"      - \"443:443\"",
 		"    volumes:",
-		"      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro",
-		"      - ./nginx-cert.pem:/etc/nginx/certs/server.pem:ro",
-		"      - ./nginx-key.pem:/etc/nginx/certs/server-key.pem:ro",
+		"      - ./compose/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro",
+		"      - ./compose/nginx/nginx-cert.pem:/etc/nginx/certs/server.pem:ro",
+		"      - ./compose/nginx/nginx-key.pem:/etc/nginx/certs/server-key.pem:ro",
 		"    depends_on:",
 		"      - openclaw-gateway",
 		"    networks:",
@@ -156,13 +165,13 @@ func composeFileContent() string {
 		"",
 		"  squid:",
 		"    build:",
-		"      context: .",
+		"      context: ./compose/squid",
 		"      dockerfile: Dockerfile.squid",
 		"    restart: unless-stopped",
 		"    volumes:",
-		"      - ./squid.conf:/etc/squid/squid.conf:ro",
-		"      - ./ca-cert.pem:/etc/squid/ca-cert.pem:ro",
-		"      - ./ca-key.pem:/etc/squid/ca-key.pem:ro",
+		"      - ./compose/squid/squid.conf:/etc/squid/squid.conf:ro",
+		"      - ./compose/squid/ca-cert.pem:/etc/squid/ca-cert.pem:ro",
+		"      - ./compose/squid/ca-key.pem:/etc/squid/ca-key.pem:ro",
 		"      - squid-log:/var/log/squid",
 		"      - squid-cache:/var/spool/squid",
 		"    networks:",
@@ -171,7 +180,7 @@ func composeFileContent() string {
 		"",
 		"  openclaw-gateway:",
 		"    build:",
-		"      context: .",
+		"      context: ./compose/openclaw",
 		"      dockerfile: Dockerfile",
 		"    env_file:",
 		"      - .env.openclaw",
@@ -189,7 +198,7 @@ func composeFileContent() string {
 		"    volumes:",
 		"      - ${OPENCLAW_CONFIG_DIR}:${OPENCLAW_CONFIG_DIR}",
 		"      - ${OPENCLAW_WORKSPACE_DIR}:${OPENCLAW_WORKSPACE_DIR}",
-		"      - ./ca-cert.pem:/etc/ssl/certs/openclaw-ca.pem:ro",
+		"      - ./compose/squid/ca-cert.pem:/etc/ssl/certs/openclaw-ca.pem:ro",
 		"    depends_on:",
 		"      - squid",
 		"    networks:",
@@ -463,7 +472,7 @@ fi
 export OPENCLAW_GATEWAY_TOKEN
 
 # Seed openclaw.json if not already present in config dir.
-OPENCLAW_JSON_SEED="$ROOT_DIR/openclaw.json"
+OPENCLAW_JSON_SEED="$ROOT_DIR/compose/openclaw/openclaw.json"
 OPENCLAW_JSON_TARGET="$OPENCLAW_CONFIG_DIR/openclaw.json"
 if [[ -f "$OPENCLAW_JSON_SEED" ]] && [[ ! -f "$OPENCLAW_JSON_TARGET" ]]; then
   sed "s/__GATEWAY_TOKEN__/$OPENCLAW_GATEWAY_TOKEN/g" \
@@ -499,8 +508,8 @@ echo ""
 echo "Commands:"
 echo "  docker compose -f $COMPOSE_FILE logs -f openclaw-gateway"
 echo ""
-echo "Nginx config:           $ROOT_DIR/nginx.conf"
-echo "Squid egress whitelist: $ROOT_DIR/squid.conf"
+echo "Nginx config:           $ROOT_DIR/compose/nginx/nginx.conf"
+echo "Squid egress whitelist: $ROOT_DIR/compose/squid/squid.conf"
 echo "Gateway config:         $OPENCLAW_CONFIG_DIR/openclaw.json"
 `, configDir, configDir, workspaceDir, gatewayPort)
 }
@@ -528,7 +537,7 @@ CMD ["squid", "-N"]
 }
 
 func writeSquidDockerfile(opts Options) error {
-	path := filepath.Join(opts.OutputDir, "Dockerfile.squid")
+	path := filepath.Join(opts.OutputDir, "compose", "squid", "Dockerfile.squid")
 
 	if opts.ConfirmWrite != nil {
 		if err := opts.ConfirmWrite(path); err != nil {
@@ -606,7 +615,7 @@ func squidConfContent(opts Options) string {
 }
 
 func writeSquidConf(opts Options) error {
-	path := filepath.Join(opts.OutputDir, "squid.conf")
+	path := filepath.Join(opts.OutputDir, "compose", "squid", "squid.conf")
 
 	if opts.ConfirmWrite != nil {
 		if err := opts.ConfirmWrite(path); err != nil {
@@ -647,7 +656,7 @@ func openClawJSONContent(opts Options) string {
 }
 
 func writeOpenClawJSON(opts Options) error {
-	path := filepath.Join(opts.OutputDir, "openclaw.json")
+	path := filepath.Join(opts.OutputDir, "compose", "openclaw", "openclaw.json")
 
 	if opts.ConfirmWrite != nil {
 		if err := opts.ConfirmWrite(path); err != nil {
@@ -707,7 +716,7 @@ server {
 }
 
 func writeNginxConf(opts Options) error {
-	path := filepath.Join(opts.OutputDir, "nginx.conf")
+	path := filepath.Join(opts.OutputDir, "compose", "nginx", "nginx.conf")
 
 	if opts.ConfirmWrite != nil {
 		if err := opts.ConfirmWrite(path); err != nil {

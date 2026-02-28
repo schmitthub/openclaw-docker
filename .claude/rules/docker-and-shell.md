@@ -5,19 +5,33 @@ globs: ["**/Dockerfile*", "**/compose*.yaml", "**/.env*", "**/*.sh", "internal/r
 # Docker & Shell Artifact Rules
 
 ## Generated Artifacts
-The CLI generates twelve files to `<output>/` (default `./openclaw-deploy`):
+The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized by service:
 
+**Root files:**
+| File | Permissions | Purpose |
+|------|-------------|---------|
+| `compose.yaml` | 0644 | Nginx + squid + gateway services on internal network |
+| `.env.openclaw` | 0644 | Runtime env vars including proxy config |
+| `setup.sh` | 0755 | Token gen, openclaw.json seeding, compose up orchestration |
+| `manifest.json` | 0644 | Resolved version metadata |
+
+**`compose/openclaw/`:**
 | File | Permissions | Purpose |
 |------|-------------|---------|
 | `Dockerfile` | 0644 | Lean `node:22-bookworm` image with OpenClaw installed via curl |
-| `Dockerfile.squid` | 0644 | Custom squid image with `squid-openssl` for SSL bump support |
-| `compose.yaml` | 0644 | Squid proxy + gateway services on internal network |
-| `setup.sh` | 0755 | Token gen, openclaw.json seeding, compose up orchestration |
-| `.env.openclaw` | 0644 | Runtime env vars including proxy config |
-| `squid.conf` | 0644 | Squid proxy config with SSL bump + domain whitelist ACLs |
 | `openclaw.json` | 0644 | Pre-seeded gateway config (token placeholder replaced by setup.sh) |
-| `ca-cert.pem` | 0644 | Self-signed CA cert for squid SSL bump (mounted into both containers) |
+
+**`compose/squid/`:**
+| File | Permissions | Purpose |
+|------|-------------|---------|
+| `Dockerfile.squid` | 0644 | Custom squid image with `squid-openssl` for SSL bump support |
+| `squid.conf` | 0644 | Squid proxy config with SSL bump + domain whitelist ACLs |
+| `ca-cert.pem` | 0644 | Self-signed CA cert for squid SSL bump (cross-referenced by gateway) |
 | `ca-key.pem` | 0600 | CA private key (mounted into squid only) |
+
+**`compose/nginx/`:**
+| File | Permissions | Purpose |
+|------|-------------|---------|
 | `nginx.conf` | 0644 | HTTPS reverse proxy with WebSocket support + commented-out mTLS |
 | `nginx-cert.pem` | 0644 | TLS server cert signed by CA (for nginx HTTPS on port 443) |
 | `nginx-key.pem` | 0600 | TLS server key for nginx |
@@ -32,11 +46,13 @@ The CLI generates twelve files to `<output>/` (default `./openclaw-deploy`):
 
 ## Compose Conventions
 - nginx (`nginx:alpine`) is the sole ingress — publishes port 443, proxies to gateway
-- Gateway and squid build from local Dockerfiles; nginx uses stock image
+- Gateway and squid build from `compose/<service>/` subdirectories; nginx uses stock image
+- Build contexts: `./compose/openclaw` (gateway), `./compose/squid` (squid)
 - Gateway has no published ports — only accessible via nginx on internal network
 - Squid proxy on both `openclaw-internal` and `openclaw-egress` networks
 - Gateway on `openclaw-internal` (internal: true) only — all egress routes through squid
 - Squid SSL-bumps TLS with CA cert; gateway trusts it via `NODE_EXTRA_CA_CERTS`
+- Gateway cross-references CA cert from squid dir: `./compose/squid/ca-cert.pem`
 - nginx TLS cert is signed by the same CA; users can swap for production certs
 - Named volumes: `squid-log`, `squid-cache` for squid persistence
 - Env vars sourced from `.env.openclaw` via `env_file`

@@ -16,8 +16,8 @@ import (
 )
 
 func generateCA(opts Options) error {
-	certPath := filepath.Join(opts.OutputDir, "ca-cert.pem")
-	keyPath := filepath.Join(opts.OutputDir, "ca-key.pem")
+	certPath := filepath.Join(opts.OutputDir, "compose", "squid", "ca-cert.pem")
+	keyPath := filepath.Join(opts.OutputDir, "compose", "squid", "ca-key.pem")
 
 	// Preserve existing CA across re-runs so gateway trust isn't broken.
 	if fileExists(certPath) && fileExists(keyPath) {
@@ -83,8 +83,8 @@ func generateCA(opts Options) error {
 }
 
 func generateNginxCert(opts Options) error {
-	certPath := filepath.Join(opts.OutputDir, "nginx-cert.pem")
-	keyPath := filepath.Join(opts.OutputDir, "nginx-key.pem")
+	certPath := filepath.Join(opts.OutputDir, "compose", "nginx", "nginx-cert.pem")
+	keyPath := filepath.Join(opts.OutputDir, "compose", "nginx", "nginx-key.pem")
 
 	// Preserve existing cert across re-runs.
 	if fileExists(certPath) && fileExists(keyPath) {
@@ -92,8 +92,8 @@ func generateNginxCert(opts Options) error {
 	}
 
 	// Load the CA cert+key to sign the server certificate.
-	caCertPath := filepath.Join(opts.OutputDir, "ca-cert.pem")
-	caKeyPath := filepath.Join(opts.OutputDir, "ca-key.pem")
+	caCertPath := filepath.Join(opts.OutputDir, "compose", "squid", "ca-cert.pem")
+	caKeyPath := filepath.Join(opts.OutputDir, "compose", "squid", "ca-key.pem")
 
 	caCertPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
