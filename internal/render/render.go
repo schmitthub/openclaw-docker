@@ -299,7 +299,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 RUN corepack enable && \
-    npm install -g --no-fund --no-audit pnpm bun
+    corepack prepare pnpm@latest --activate && \
+    npm install -g --no-fund --no-audit bun
 
 WORKDIR /app
 RUN chown node:node /app
