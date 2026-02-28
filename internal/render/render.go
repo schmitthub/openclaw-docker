@@ -298,7 +298,8 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-RUN corepack enable
+RUN corepack enable && \
+    npm install -g --no-fund --no-audit pnpm bun
 
 WORKDIR /app
 RUN chown node:node /app
@@ -515,6 +516,14 @@ echo ""
 docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli onboard --no-install-daemon
 
 echo ""
+echo "==> Setting gateway auth token"
+docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
+  config set gateway.auth.mode token >/dev/null
+docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
+  config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null
+echo "Gateway token set (matches .env.openclaw)."
+
+echo ""
 echo "==> Trusted proxies (Docker network CIDRs)"
 docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
   config set gateway.trustedProxies \
@@ -567,6 +576,7 @@ func envoyConfigContent(opts Options) string {
 	// These domains are always included regardless of --allowed-domains.
 	alwaysAllowed := []string{
 		"clawhub.com",
+		"registry.npmjs.org",
 	}
 
 	// Deduplicate: start with always-allowed, then add user-specified domains.

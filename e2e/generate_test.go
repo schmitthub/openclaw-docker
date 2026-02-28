@@ -153,6 +153,8 @@ func TestGenerateDockerfileContent(t *testing.T) {
 		"/usr/local/bin/openclaw",
 		"iptables",
 		"gosu",
+		"pnpm",
+		"bun",
 		"COPY entrypoint.sh /usr/local/bin/entrypoint.sh",
 		`ENTRYPOINT ["entrypoint.sh"]`,
 		`CMD ["openclaw", "gateway", "--allow-unconfigured"]`,
@@ -377,6 +379,7 @@ func TestGenerateSetupScriptExecutable(t *testing.T) {
 		// Onboarding (mirrors official docker-setup.sh).
 		"openclaw-cli onboard --no-install-daemon",
 		// Config management via CLI.
+		"gateway.auth.token",
 		"ensure_control_ui_allowed_origins",
 		"controlUi.allowedOrigins",
 		"gateway.trustedProxies",
@@ -538,6 +541,7 @@ func TestGenerateEnvoyConfigContent(t *testing.T) {
 		"CONNECT",
 		"Forbidden",
 		"clawhub.com:443",
+		"registry.npmjs.org:443",
 		"api.anthropic.com:443",
 		"api.openai.com:443",
 		"generativelanguage.googleapis.com:443",
