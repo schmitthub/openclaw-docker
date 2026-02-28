@@ -32,10 +32,12 @@ archives:
       - LICENSE
       - README.md
 
-brews:
+homebrew_casks:
   - name: openclaw-docker
     ids:
       - default
+    binaries:
+      - openclaw-docker
     repository:
       owner: schmitthub
       name: homebrew-tap
@@ -43,6 +45,12 @@ brews:
     homepage: https://github.com/schmitthub/openclaw-docker
     description: "CLI for building custom OpenClaw Dockerfiles"
     license: "MIT"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/openclaw-docker"]
+          end
 
 checksum:
   name_template: "checksums.txt"
