@@ -10,7 +10,7 @@ The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized 
 **Root files:**
 | File | Permissions | Purpose |
 |------|-------------|---------|
-| `compose.yaml` | 0644 | Nginx + squid + gateway services on internal network |
+| `compose.yaml` | 0644 | Envoy + gateway services on internal network |
 | `.env.openclaw` | 0644 | Runtime env vars including proxy config |
 | `setup.sh` | 0755 | Token gen, openclaw.json seeding, compose up orchestration |
 | `manifest.json` | 0644 | Resolved version metadata |
@@ -18,44 +18,59 @@ The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized 
 **`compose/openclaw/`:**
 | File | Permissions | Purpose |
 |------|-------------|---------|
-| `Dockerfile` | 0644 | Lean `node:22-bookworm` image with OpenClaw installed via curl |
+| `Dockerfile` | 0644 | `node:22-bookworm` with `iptables` + `gosu` for egress lockdown |
+| `entrypoint.sh` | 0755 | Root-owned: sets iptables rules, then drops to `node` via `gosu` |
 | `openclaw.json` | 0644 | Pre-seeded gateway config (token placeholder replaced by setup.sh) |
 
-**`compose/squid/`:**
+**`compose/envoy/`:**
 | File | Permissions | Purpose |
 |------|-------------|---------|
-| `Dockerfile.squid` | 0644 | Custom squid image with `squid-openssl` for SSL bump support |
-| `squid.conf` | 0644 | Squid proxy config with SSL bump + domain whitelist ACLs |
-| `ca-cert.pem` | 0644 | Self-signed CA cert for squid SSL bump (cross-referenced by gateway) |
-| `ca-key.pem` | 0600 | CA private key (mounted into squid only) |
-
-**`compose/nginx/`:**
-| File | Permissions | Purpose |
-|------|-------------|---------|
-| `nginx.conf` | 0644 | HTTPS reverse proxy with WebSocket support + commented-out mTLS |
-| `nginx-cert.pem` | 0644 | TLS server cert signed by CA (for nginx HTTPS on port 443) |
-| `nginx-key.pem` | 0600 | TLS server key for nginx |
+| `envoy.yaml` | 0644 | Envoy config: ingress (TLS+reverse proxy) + egress (CONNECT+domain ACL) |
+| `server-cert.pem` | 0644 | Self-signed TLS cert for Envoy ingress listener |
+| `server-key.pem` | 0600 | TLS key for Envoy ingress listener |
 
 ## Dockerfile Conventions
 - Base: `node:22-bookworm` (matches official OpenClaw Docker pattern)
-- User: `node` (from base image, not custom)
-- No `ENTRYPOINT` — only `CMD`
-- No firewall scripts, no dev tools (zsh, git-delta, hadolint, fzf)
-- Install via: `curl -fsSL "https://openclaw.ai/install.sh" | bash`
-- `OPENCLAW_DOCKER_APT_PACKAGES` ARG for optional packages
+- Always installs `iptables` and `gosu` (required for egress security model)
+- OpenClaw installed via `npm install -g openclaw@<version>` (not the install script — no need for interactive/retry logic in Docker)
+- `SHARP_IGNORE_GLOBAL_LIBVIPS=1` set during npm install (matches install script behavior)
+- CLI symlink: `ln -sf "$(npm root -g)/openclaw/dist/entry.js" /usr/local/bin/openclaw`
+- Optional `OPENCLAW_INSTALL_BROWSER` ARG: bakes Playwright + Chromium + Xvfb (~300MB)
+- `COPY entrypoint.sh /usr/local/bin/entrypoint.sh` — root-owned, 0755
+- `ENTRYPOINT ["entrypoint.sh"]` runs as root to set iptables, then drops to `node`
+- `CMD ["openclaw", "gateway", "--allow-unconfigured"]`
+- `OPENCLAW_DOCKER_APT_PACKAGES` ARG for optional additional packages
+- No dev tools (zsh, git-delta, hadolint, fzf)
+
+## Entrypoint Security Model
+The `entrypoint.sh` script enforces network-level egress isolation:
+1. Resolves Envoy's IP via `getent hosts envoy`
+2. Sets `iptables -P OUTPUT DROP` (default deny all outbound)
+3. Allows: loopback, Docker DNS (127.0.0.11:53 UDP), established/related, traffic to Envoy IP
+4. Drops to `node` user via `exec gosu node "$@"`
+
+The `node` user cannot modify iptables rules (requires `CAP_NET_ADMIN` which only root has).
+This is the primary egress enforcement — `HTTP_PROXY` env vars are convenience, not security.
 
 ## Compose Conventions
-- nginx (`nginx:alpine`) is the sole ingress — publishes port 443, proxies to gateway
-- Gateway and squid build from `compose/<service>/` subdirectories; nginx uses stock image
-- Build contexts: `./compose/openclaw` (gateway), `./compose/squid` (squid)
-- Gateway has no published ports — only accessible via nginx on internal network
-- Squid proxy on both `openclaw-internal` and `openclaw-egress` networks
-- Gateway on `openclaw-internal` (internal: true) only — all egress routes through squid
-- Squid SSL-bumps TLS with CA cert; gateway trusts it via `NODE_EXTRA_CA_CERTS`
-- Gateway cross-references CA cert from squid dir: `./compose/squid/ca-cert.pem`
-- nginx TLS cert is signed by the same CA; users can swap for production certs
-- Named volumes: `squid-log`, `squid-cache` for squid persistence
+- Envoy (`envoyproxy/envoy:v1.33-latest`) is the sole ingress/egress proxy
+- Envoy publishes port 443 for ingress; egress listener on port 10000 (internal only)
+- Gateway builds from `compose/openclaw/` subdirectory
+- Gateway uses `cap_add: [NET_ADMIN]` — required by root entrypoint for iptables setup
+- Gateway has no published ports — only accessible via Envoy on internal network
+- Envoy on both `openclaw-internal` (internal: true) and `openclaw-egress` networks
+- Gateway on `openclaw-internal` only — all egress routes through Envoy
+- `HTTPS_PROXY=http://envoy:10000` set as convenience for proxy-aware tools
 - Env vars sourced from `.env.openclaw` via `env_file`
+
+## Envoy Configuration
+- **Ingress listener (:443)**: TLS termination, WebSocket upgrade, reverse proxy to gateway
+- **Egress listener (:10000)**: HTTP CONNECT forward proxy with domain whitelist
+- Domain ACL via virtual host `domains` field matching `host:port` from CONNECT authority
+- `openclaw.ai` always included in egress whitelist
+- Dynamic forward proxy cluster resolves allowed domains and establishes TCP tunnels
+- Unmatched domains get 403 Forbidden response
+- No SSL bump / MITM — TLS is end-to-end between gateway and API providers
 
 ## Shell Script Conventions
 - Shebang: `#!/usr/bin/env bash`
@@ -68,15 +83,13 @@ The CLI generates files to `<output>/` (default `./openclaw-deploy`), organized 
 Generation lives in `internal/render/render.go` and `internal/render/ca.go`:
 - `Generate(opts)` — orchestrates all artifact writes
 - `dockerfileFor(opts)` — Dockerfile content via `fmt.Sprintf`
-- `composeFileContent()` — compose YAML as string-joined lines
+- `entrypointContent()` — entrypoint.sh with iptables + gosu
+- `composeFileContent(opts)` — compose YAML as string-joined lines
 - `openClawEnvFileContent(opts)` — env file via `fmt.Sprintf`
 - `setupScriptContent(opts)` — setup.sh via `fmt.Sprintf`
-- `squidDockerfileContent()` — Dockerfile.squid content
-- `squidConfContent(opts)` — squid.conf with SSL bump + domain ACLs
+- `envoyConfigContent(opts)` — envoy.yaml with ingress + egress listeners
 - `openClawJSONContent(opts)` — openclaw.json with gateway config
-- `generateCA(opts)` — CA cert+key generation (in `ca.go`, preserves existing across re-runs)
-- `generateNginxCert(opts)` — TLS server cert signed by CA (in `ca.go`)
-- `nginxConfContent(opts)` — nginx.conf with HTTPS reverse proxy + mTLS comments
+- `generateTLSCert(opts)` — self-signed TLS cert generation (in `ca.go`, preserves existing across re-runs)
 
 ## Validation
 ```bash
@@ -84,8 +97,9 @@ Generation lives in `internal/render/render.go` and `internal/render/ca.go`:
 go run . generate --openclaw-version latest --output ./openclaw-deploy --dangerous-inline
 
 # Validate compose
-docker compose --env-file ./openclaw-deploy/.env.openclaw -f ./openclaw-deploy/compose.yaml config
+docker compose -f ./openclaw-deploy/compose.yaml config
 
-# Check setup.sh is executable
+# Check setup.sh and entrypoint.sh are executable
 test -x ./openclaw-deploy/setup.sh
+test -x ./openclaw-deploy/compose/openclaw/entrypoint.sh
 ```

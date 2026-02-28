@@ -17,8 +17,8 @@ globs: ["**/*.go"]
 ## Package Layout
 | Package | Purpose |
 |---------|---------|
-| `internal/cmd` | Cobra commands (root, generate, resolve, render, config, version) |
-| `internal/render` | Dockerfile/compose/env/setup.sh generation |
+| `internal/cmd` | Cobra commands (root, generate, config, version) |
+| `internal/render` | Dockerfile/compose/env/setup.sh/envoy config generation |
 | `internal/versions` | npm version resolution, manifest I/O, semver matching |
 | `internal/config` | YAML config loading and default template |
 | `internal/build` | Build metadata (version/date via ldflags) |

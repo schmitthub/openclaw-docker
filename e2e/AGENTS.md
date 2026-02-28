@@ -6,7 +6,7 @@ End-to-end generation tests. Package name: `test`.
 
 | File | Purpose |
 |------|---------|
-| `generate_test.go` | 16 tests covering generate pipeline |
+| `generate_test.go` | 15 tests covering generate pipeline |
 | `harness/harness.go` | Test harness: isolated FS + Cobra CLI execution |
 
 ## Running
@@ -33,22 +33,21 @@ All other tests use seeded manifests and don't require network access.
 
 ## Current Test Coverage
 
-- File existence and non-emptiness (13 artifacts in compose/<service>/ subdirs + root)
-- Output directory structure (compose/openclaw, compose/squid, compose/nginx)
-- Dockerfile content (base image, version, forbidden content)
+- File existence and non-emptiness (10 artifacts in compose/<service>/ subdirs + root)
+- Output directory structure (compose/openclaw, compose/envoy; no squid/nginx)
+- Dockerfile content (base image, version, iptables, gosu, ENTRYPOINT, no proxy-preload)
 - Custom apt packages
-- Compose services (nginx, squid, gateway), networks, build contexts, volume mounts, NODE_EXTRA_CA_CERTS, named volumes
-- Env file variables and proxy config
-- Setup script permissions, shebang, expected content
+- Compose services (envoy, gateway), networks, build contexts, Envoy volumes, cap_add NET_ADMIN
+- Env file variables and proxy config (envoy:10000, no NODE_OPTIONS, no dead vars)
+- Setup script permissions, shebang, expected content, envoy service start
 - Custom options propagation (port, bind)
 - Idempotency (two runs = identical output)
 - Full pipeline (npm resolve + generate)
-- Squid.conf content (SSL bump, sslcrtd_program, deny all, openclaw.ai)
-- Squid allowed domains propagation via --squid-allowed-domains
+- Envoy config content (ingress/egress listeners, domain whitelist, CONNECT, WebSocket)
+- Envoy allowed domains propagation via --allowed-domains
 - openclaw.json content (gateway, mode, bind, auth, token placeholder)
-- CA cert generation (valid PEM, idempotent across re-runs)
-- nginx.conf content (upstream, proxy_pass, SSL, WebSocket upgrade, commented mTLS)
-- nginx cert generation (valid PEM, signed by CA, idempotent across re-runs)
+- TLS cert generation (valid PEM, idempotent across re-runs)
+- Entrypoint content (iptables OUTPUT DROP, Docker DNS, Envoy allow, gosu node, executable)
 
 ## Test Pattern
 

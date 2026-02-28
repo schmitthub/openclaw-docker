@@ -20,9 +20,8 @@ type FileConfig struct {
 	OpenClawGatewayBind  string `yaml:"openclaw_gateway_bind"`
 	OpenClawImage        string `yaml:"openclaw_image"`
 	OpenClawGatewayToken string `yaml:"openclaw_gateway_token"`
-	OpenClawExtraMounts  string `yaml:"openclaw_extra_mounts"`
-	OpenClawHomeVolume   string `yaml:"openclaw_home_volume"`
-	SquidAllowedDomains  string `yaml:"squid_allowed_domains"`
+	AllowedDomains       string `yaml:"allowed_domains"`
+	ExternalOrigin       string `yaml:"external_origin"`
 }
 
 func Load(path string) (FileConfig, error) {

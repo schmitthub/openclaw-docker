@@ -17,20 +17,13 @@ flags > env vars (`OPENCLAW_DOCKER_*`) > config file > defaults
 |----------|----------|---------|---------|
 | `version` | `--openclaw-version` | `OPENCLAW_DOCKER_VERSION` | `latest` |
 | `output` | `--output` / `-o` | `OPENCLAW_DOCKER_OUTPUT` | `./openclaw-deploy` |
-| `versions_file` | `--versions-file` | `OPENCLAW_DOCKER_VERSIONS_FILE` | `$CACHE/openclaw-docker/versions.json` |
 | `docker_apt_packages` | `--docker-apt-packages` | `OPENCLAW_DOCKER_APT_PACKAGES` | `""` |
 | `openclaw_config_dir` | `--openclaw-config-dir` | `OPENCLAW_DOCKER_OPENCLAW_CONFIG_DIR` | `/home/node/.openclaw` |
 | `openclaw_gateway_port` | `--openclaw-gateway-port` | `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_PORT` | `18789` |
-| `squid_allowed_domains` | `--squid-allowed-domains` | `OPENCLAW_DOCKER_SQUID_ALLOWED_DOMAINS` | `""` |
+| `allowed_domains` | `--allowed-domains` | `OPENCLAW_DOCKER_ALLOWED_DOMAINS` | `api.anthropic.com,...` |
+| `external_origin` | `--external-origin` | `OPENCLAW_DOCKER_EXTERNAL_ORIGIN` | `""` |
 | `cleanup` | `--cleanup` | `OPENCLAW_DOCKER_CLEANUP` | `false` |
 | `debug` | `--debug` | `OPENCLAW_DOCKER_DEBUG` | `false` |
-
-## Cache Dir Resolution
-`defaultVersionsFilePath()` in `internal/cmd/root.go`:
-1. `OPENCLAW_DOCKER_CACHE_DIR` env var (used by testenv)
-2. `XDG_CACHE_HOME` env var
-3. `~/.cache`
-Manifest path: `<cache>/openclaw-docker/versions.json`
 
 ## mergedOptions Flow
 `mergedOptions(cmd)` in `root.go` builds the full option set:

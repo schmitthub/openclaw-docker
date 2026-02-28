@@ -30,9 +30,8 @@ func newGenerateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&rootOpts.OpenClawGatewayBind, "openclaw-gateway-bind", "", "Default OPENCLAW_GATEWAY_BIND value baked into generated Dockerfile")
 	cmd.Flags().StringVar(&rootOpts.OpenClawImage, "openclaw-image", "", "Default OPENCLAW_IMAGE value used in generated compose/.env.openclaw")
 	cmd.Flags().StringVar(&rootOpts.OpenClawGatewayToken, "openclaw-gateway-token", "", "Default OPENCLAW_GATEWAY_TOKEN value used in generated compose/.env.openclaw")
-	cmd.Flags().StringVar(&rootOpts.OpenClawExtraMounts, "openclaw-extra-mounts", "", "Default OPENCLAW_EXTRA_MOUNTS value used in generated compose/.env.openclaw")
-	cmd.Flags().StringVar(&rootOpts.OpenClawHomeVolume, "openclaw-home-volume", "", "Default OPENCLAW_HOME_VOLUME value used in generated compose/.env.openclaw")
-	cmd.Flags().StringVar(&rootOpts.SquidAllowedDomains, "squid-allowed-domains", "", "Comma-separated domains to whitelist in squid egress proxy")
+	cmd.Flags().StringVar(&rootOpts.AllowedDomains, "allowed-domains", "", "Comma-separated domains to whitelist in egress proxy")
+	cmd.Flags().StringVar(&rootOpts.ExternalOrigin, "external-origin", "", "External origin for server deployments (e.g. https://myclaw.example.com)")
 
 	return cmd
 }
@@ -81,9 +80,8 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		OpenClawGatewayBind:  opts.OpenClawGatewayBind,
 		OpenClawImage:        opts.OpenClawImage,
 		OpenClawGatewayToken: opts.OpenClawGatewayToken,
-		OpenClawExtraMounts:  opts.OpenClawExtraMounts,
-		OpenClawHomeVolume:   opts.OpenClawHomeVolume,
-		SquidAllowedDomains:  opts.SquidAllowedDomains,
+		AllowedDomains:       opts.AllowedDomains,
+		ExternalOrigin:       opts.ExternalOrigin,
 		ConfirmWrite: func(path string) error {
 			return confirmWrite(cmd, opts.DangerousInline, path)
 		},

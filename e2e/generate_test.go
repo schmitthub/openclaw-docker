@@ -53,14 +53,11 @@ func TestGenerateProducesAllFiles(t *testing.T) {
 
 	for _, name := range []string{
 		"compose/openclaw/Dockerfile",
+		"compose/openclaw/entrypoint.sh",
 		"compose/openclaw/openclaw.json",
-		"compose/squid/Dockerfile.squid",
-		"compose/squid/squid.conf",
-		"compose/squid/ca-cert.pem",
-		"compose/squid/ca-key.pem",
-		"compose/nginx/nginx.conf",
-		"compose/nginx/nginx-cert.pem",
-		"compose/nginx/nginx-key.pem",
+		"compose/envoy/envoy.yaml",
+		"compose/envoy/server-cert.pem",
+		"compose/envoy/server-key.pem",
 		"compose.yaml",
 		".env.openclaw",
 		"setup.sh",
@@ -99,14 +96,15 @@ func TestGenerateOutputStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output dir: %v", err)
 	}
+	allowedDirs := map[string]bool{"compose": true, "data": true}
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != "compose" {
+		if entry.IsDir() && !allowedDirs[entry.Name()] {
 			t.Errorf("unexpected subdirectory in output: %s", entry.Name())
 		}
 	}
 
 	// Verify compose service subdirectories exist.
-	for _, sub := range []string{"compose/openclaw", "compose/squid", "compose/nginx"} {
+	for _, sub := range []string{"compose/openclaw", "compose/envoy"} {
 		info, err := os.Stat(filepath.Join(outputDir, sub))
 		if err != nil {
 			t.Errorf("expected %s to exist: %v", sub, err)
@@ -114,6 +112,13 @@ func TestGenerateOutputStructure(t *testing.T) {
 		}
 		if !info.IsDir() {
 			t.Errorf("expected %s to be a directory", sub)
+		}
+	}
+
+	// Verify old squid/nginx directories do NOT exist.
+	for _, sub := range []string{"compose/squid", "compose/nginx"} {
+		if _, err := os.Stat(filepath.Join(outputDir, sub)); err == nil {
+			t.Errorf("unexpected directory %s should not exist", sub)
 		}
 	}
 }
@@ -143,9 +148,18 @@ func TestGenerateDockerfileContent(t *testing.T) {
 	mustContain := []string{
 		"FROM node:22-bookworm",
 		"OPENCLAW_VERSION=2026.2.26",
-		"openclaw.ai/install.sh",
-		"USER node",
-		"CMD [\"node\", \"openclaw.mjs\", \"gateway\", \"--allow-unconfigured\"]",
+		"npm install -g",
+		`openclaw@${OPENCLAW_VERSION}`,
+		"SHARP_IGNORE_GLOBAL_LIBVIPS=1",
+		"/usr/local/bin/openclaw",
+		"iptables",
+		"gosu",
+		"COPY entrypoint.sh /usr/local/bin/entrypoint.sh",
+		`ENTRYPOINT ["entrypoint.sh"]`,
+		`CMD ["openclaw", "gateway", "--allow-unconfigured"]`,
+		"OPENCLAW_INSTALL_BROWSER",
+		"playwright-core/cli.js",
+		"xvfb",
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(body, s) {
@@ -154,14 +168,15 @@ func TestGenerateDockerfileContent(t *testing.T) {
 	}
 
 	mustNotContain := []string{
-		"firewall",
-		"iptables",
-		"entrypoint",
-		"ENTRYPOINT",
+		"firewall.sh",
 		"alpine",
 		"zsh-in-docker",
 		"hadolint",
 		"git-delta",
+		"proxy-preload",
+		"NODE_OPTIONS",
+		"openclaw.ai/install.sh",
+		"openclaw.mjs",
 	}
 	for _, s := range mustNotContain {
 		if strings.Contains(body, s) {
@@ -219,7 +234,7 @@ func TestGenerateComposeContent(t *testing.T) {
 	}
 	body := string(content)
 
-	for _, svc := range []string{"nginx:", "squid:", "openclaw-gateway:"} {
+	for _, svc := range []string{"envoy:", "openclaw-gateway:"} {
 		if !strings.Contains(body, svc) {
 			t.Errorf("compose.yaml missing service %q", svc)
 		}
@@ -231,10 +246,6 @@ func TestGenerateComposeContent(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(body, "dockerfile: Dockerfile.squid") {
-		t.Error("compose.yaml missing Dockerfile.squid build reference for squid")
-	}
-
 	if !strings.Contains(body, "dockerfile: Dockerfile") {
 		t.Error("compose.yaml should reference local Dockerfile via build directive")
 	}
@@ -243,23 +254,25 @@ func TestGenerateComposeContent(t *testing.T) {
 	}
 
 	for _, s := range []string{
-		"nginx:alpine",
-		"compose/nginx/nginx.conf:/etc/nginx/conf.d/default.conf",
-		"compose/nginx/nginx-cert.pem:/etc/nginx/certs/server.pem",
-		"compose/nginx/nginx-key.pem:/etc/nginx/certs/server-key.pem",
+		"envoyproxy/envoy:",
+		"compose/envoy/envoy.yaml:/etc/envoy/envoy.yaml",
+		"compose/envoy/server-cert.pem:/etc/envoy/certs/server-cert.pem",
+		"compose/envoy/server-key.pem:/etc/envoy/certs/server-key.pem",
 		"443:443",
-		"compose/squid/squid.conf:/etc/squid/squid.conf",
-		"compose/squid/ca-cert.pem:/etc/squid/ca-cert.pem",
-		"compose/squid/ca-key.pem:/etc/squid/ca-key.pem",
-		"NODE_EXTRA_CA_CERTS",
-		"compose/squid/ca-cert.pem:/etc/ssl/certs/openclaw-ca.pem",
-		"context: ./compose/squid",
 		"context: ./compose/openclaw",
-		"squid-log:",
-		"squid-cache:",
+		"internal: true",
+		"cap_add:",
+		"NET_ADMIN",
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("compose.yaml missing expected content: %q", s)
+		}
+	}
+
+	// Old squid/nginx artifacts and Node.js hacks should not be present.
+	for _, s := range []string{"nginx:", "squid:", "NODE_EXTRA_CA_CERTS", "squid-log", "squid-cache", "NODE_OPTIONS", "proxy-preload"} {
+		if strings.Contains(body, s) {
+			t.Errorf("compose.yaml contains unexpected legacy content: %q", s)
 		}
 	}
 }
@@ -292,13 +305,20 @@ func TestGenerateEnvContent(t *testing.T) {
 		"OPENCLAW_GATEWAY_PORT=",
 		"OPENCLAW_BRIDGE_PORT=",
 		"OPENCLAW_GATEWAY_BIND=",
-		"OPENCLAW_HTTP_PROXY=http://squid:3128",
-		"OPENCLAW_HTTPS_PROXY=http://squid:3128",
-		"OPENCLAW_NO_PROXY=",
+		"HTTP_PROXY=http://envoy:10000",
+		"HTTPS_PROXY=http://envoy:10000",
+		"NO_PROXY=localhost,127.0.0.1,envoy,openclaw-gateway",
 	}
 	for _, v := range expectedVars {
 		if !strings.Contains(body, v) {
 			t.Errorf(".env.openclaw missing %q", v)
+		}
+	}
+
+	// Dead vars and Node.js hacks should not be present.
+	for _, v := range []string{"OPENCLAW_EXTRA_MOUNTS", "OPENCLAW_HOME_VOLUME", "NODE_OPTIONS", "proxy-preload"} {
+		if strings.Contains(body, v) {
+			t.Errorf(".env.openclaw contains unexpected legacy var: %q", v)
 		}
 	}
 }
@@ -342,6 +362,10 @@ func TestGenerateSetupScriptExecutable(t *testing.T) {
 		if !strings.Contains(body, s) {
 			t.Errorf("setup.sh missing expected content: %q", s)
 		}
+	}
+
+	if !strings.Contains(body, "up -d") {
+		t.Error("setup.sh should start services")
 	}
 }
 
@@ -434,14 +458,11 @@ func TestGenerateFullPipeline(t *testing.T) {
 	// All artifacts should exist including manifest.json in output dir.
 	for _, name := range []string{
 		"compose/openclaw/Dockerfile",
+		"compose/openclaw/entrypoint.sh",
 		"compose/openclaw/openclaw.json",
-		"compose/squid/Dockerfile.squid",
-		"compose/squid/squid.conf",
-		"compose/squid/ca-cert.pem",
-		"compose/squid/ca-key.pem",
-		"compose/nginx/nginx.conf",
-		"compose/nginx/nginx-cert.pem",
-		"compose/nginx/nginx-key.pem",
+		"compose/envoy/envoy.yaml",
+		"compose/envoy/server-cert.pem",
+		"compose/envoy/server-key.pem",
 		"compose.yaml",
 		".env.openclaw",
 		"setup.sh",
@@ -465,7 +486,7 @@ func TestGenerateFullPipeline(t *testing.T) {
 	}
 }
 
-func TestGenerateSquidConfContent(t *testing.T) {
+func TestGenerateEnvoyConfigContent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
@@ -481,31 +502,36 @@ func TestGenerateSquidConfContent(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "squid", "squid.conf"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "envoy", "envoy.yaml"))
 	if err != nil {
-		t.Fatalf("read squid.conf: %v", err)
+		t.Fatalf("read envoy.yaml: %v", err)
 	}
 	body := string(content)
 
 	for _, s := range []string{
-		"http_port 3128",
-		"ssl-bump",
-		"sslcrtd_program",
-		"deny all",
-		"openclaw.ai",
-		"api.anthropic.com",
-		"api.openai.com",
-		"generativelanguage.googleapis.com",
-		"openrouter.ai",
-		"api.x.ai",
+		"ingress",
+		"egress",
+		"port_value: 443",
+		"port_value: 10000",
+		"openclaw_gateway",
+		"dynamic_forward_proxy",
+		"websocket",
+		"CONNECT",
+		"Forbidden",
+		"openclaw.ai:443",
+		"api.anthropic.com:443",
+		"api.openai.com:443",
+		"generativelanguage.googleapis.com:443",
+		"openrouter.ai:443",
+		"api.x.ai:443",
 	} {
 		if !strings.Contains(body, s) {
-			t.Errorf("squid.conf missing expected content: %q", s)
+			t.Errorf("envoy.yaml missing expected content: %q", s)
 		}
 	}
 }
 
-func TestGenerateSquidConfAllowedDomains(t *testing.T) {
+func TestGenerateEnvoyAllowedDomains(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
@@ -516,21 +542,21 @@ func TestGenerateSquidConfAllowedDomains(t *testing.T) {
 		"generate",
 		"--dangerous-inline",
 		"--output", outputDir,
-		"--squid-allowed-domains", "api.anthropic.com,api.openai.com",
+		"--allowed-domains", "api.anthropic.com,custom.example.com",
 	)
 	if result.Err != nil {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "squid", "squid.conf"))
+	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "envoy", "envoy.yaml"))
 	if err != nil {
-		t.Fatalf("read squid.conf: %v", err)
+		t.Fatalf("read envoy.yaml: %v", err)
 	}
 	body := string(content)
 
-	for _, domain := range []string{"api.anthropic.com", "api.openai.com", "openclaw.ai"} {
+	for _, domain := range []string{"api.anthropic.com:443", "custom.example.com:443", "openclaw.ai:443"} {
 		if !strings.Contains(body, domain) {
-			t.Errorf("squid.conf missing allowed domain: %q", domain)
+			t.Errorf("envoy.yaml missing allowed domain: %q", domain)
 		}
 	}
 }
@@ -565,6 +591,9 @@ func TestGenerateOpenClawJSONContent(t *testing.T) {
 		`"auth"`,
 		`"token"`,
 		"__GATEWAY_TOKEN__",
+		`"controlUi"`,
+		`"allowedOrigins"`,
+		`"https://localhost"`,
 	} {
 		if !strings.Contains(body, s) {
 			t.Errorf("openclaw.json missing expected content: %q", s)
@@ -572,7 +601,7 @@ func TestGenerateOpenClawJSONContent(t *testing.T) {
 	}
 }
 
-func TestGenerateCAGeneration(t *testing.T) {
+func TestGenerateTLSCertGeneration(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
@@ -588,23 +617,23 @@ func TestGenerateCAGeneration(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	certPath := filepath.Join(outputDir, "compose", "squid", "ca-cert.pem")
-	keyPath := filepath.Join(outputDir, "compose", "squid", "ca-key.pem")
+	certPath := filepath.Join(outputDir, "compose", "envoy", "server-cert.pem")
+	keyPath := filepath.Join(outputDir, "compose", "envoy", "server-key.pem")
 
 	certData, err := os.ReadFile(certPath)
 	if err != nil {
-		t.Fatalf("read ca-cert.pem: %v", err)
+		t.Fatalf("read server-cert.pem: %v", err)
 	}
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
-		t.Fatalf("read ca-key.pem: %v", err)
+		t.Fatalf("read server-key.pem: %v", err)
 	}
 
 	if !strings.Contains(string(certData), "BEGIN CERTIFICATE") {
-		t.Error("ca-cert.pem missing PEM certificate header")
+		t.Error("server-cert.pem missing PEM certificate header")
 	}
 	if !strings.Contains(string(keyData), "BEGIN EC PRIVATE KEY") {
-		t.Error("ca-key.pem missing PEM EC private key header")
+		t.Error("server-key.pem missing PEM EC private key header")
 	}
 
 	// Re-run should preserve the same cert (idempotency).
@@ -619,14 +648,14 @@ func TestGenerateCAGeneration(t *testing.T) {
 
 	certData2, err := os.ReadFile(certPath)
 	if err != nil {
-		t.Fatalf("read ca-cert.pem after second generate: %v", err)
+		t.Fatalf("read server-cert.pem after second generate: %v", err)
 	}
 	if string(certData) != string(certData2) {
-		t.Error("CA cert changed between generates — should be preserved")
+		t.Error("TLS cert changed between generates — should be preserved")
 	}
 }
 
-func TestGenerateNginxConfContent(t *testing.T) {
+func TestGenerateEntrypointContent(t *testing.T) {
 	h := &harness.Harness{T: t}
 	setup := h.NewIsolatedFS()
 
@@ -642,79 +671,31 @@ func TestGenerateNginxConfContent(t *testing.T) {
 		t.Fatalf("generate failed: %v", result.Err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(outputDir, "compose", "nginx", "nginx.conf"))
+	path := filepath.Join(outputDir, "compose", "openclaw", "entrypoint.sh")
+	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("read nginx.conf: %v", err)
+		t.Fatalf("entrypoint.sh missing: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Error("entrypoint.sh should be executable")
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read entrypoint.sh: %v", err)
 	}
 	body := string(content)
 
 	for _, s := range []string{
-		"upstream openclaw_gateway",
-		"proxy_pass http://openclaw_gateway",
-		"ssl_certificate",
-		"ssl_certificate_key",
-		"Upgrade",
-		"proxy_http_version 1.1",
-		"ssl_client_certificate",
-		"ssl_verify_client",
-		"proxy_read_timeout",
+		"#!/bin/bash",
+		"iptables -P OUTPUT DROP",
+		"127.0.0.11",
+		"getent hosts envoy",
+		"ESTABLISHED,RELATED",
+		"gosu node",
 	} {
 		if !strings.Contains(body, s) {
-			t.Errorf("nginx.conf missing expected content: %q", s)
+			t.Errorf("entrypoint.sh missing expected content: %q", s)
 		}
-	}
-}
-
-func TestGenerateNginxCertGeneration(t *testing.T) {
-	h := &harness.Harness{T: t}
-	setup := h.NewIsolatedFS()
-
-	seedManifest(t, setup.BaseDir)
-	outputDir := filepath.Join(setup.BaseDir, "deploy")
-
-	result := h.Run(
-		"generate",
-		"--dangerous-inline",
-		"--output", outputDir,
-	)
-	if result.Err != nil {
-		t.Fatalf("generate failed: %v", result.Err)
-	}
-
-	certPath := filepath.Join(outputDir, "compose", "nginx", "nginx-cert.pem")
-	keyPath := filepath.Join(outputDir, "compose", "nginx", "nginx-key.pem")
-
-	certData, err := os.ReadFile(certPath)
-	if err != nil {
-		t.Fatalf("read nginx-cert.pem: %v", err)
-	}
-	keyData, err := os.ReadFile(keyPath)
-	if err != nil {
-		t.Fatalf("read nginx-key.pem: %v", err)
-	}
-
-	if !strings.Contains(string(certData), "BEGIN CERTIFICATE") {
-		t.Error("nginx-cert.pem missing PEM certificate header")
-	}
-	if !strings.Contains(string(keyData), "BEGIN EC PRIVATE KEY") {
-		t.Error("nginx-key.pem missing PEM EC private key header")
-	}
-
-	// Re-run should preserve the same cert (idempotency).
-	result = h.Run(
-		"generate",
-		"--dangerous-inline",
-		"--output", outputDir,
-	)
-	if result.Err != nil {
-		t.Fatalf("second generate failed: %v", result.Err)
-	}
-
-	certData2, err := os.ReadFile(certPath)
-	if err != nil {
-		t.Fatalf("read nginx-cert.pem after second generate: %v", err)
-	}
-	if string(certData) != string(certData2) {
-		t.Error("nginx cert changed between generates — should be preserved")
 	}
 }

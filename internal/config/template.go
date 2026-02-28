@@ -10,10 +10,11 @@ func DefaultTemplate() string {
 version: latest
 
 # Output root for generated artifacts:
-# - <output>/Dockerfile
 # - <output>/compose.yaml
 # - <output>/.env.openclaw
 # - <output>/setup.sh
+# - <output>/compose/envoy/envoy.yaml
+# - <output>/compose/openclaw/Dockerfile
 output: ./openclaw-deploy
 
 # Cleanup is defensive-only (prints warning, no delete operations)
@@ -35,11 +36,14 @@ openclaw_gateway_bind: lan
 # Defaults used by generated compose/.env.openclaw
 openclaw_image: openclaw:local
 openclaw_gateway_token: ""
-openclaw_extra_mounts: ""
-openclaw_home_volume: ""
 
-# Comma-separated domains to whitelist in squid egress proxy.
+# Comma-separated domains to whitelist in the Envoy egress proxy.
 # openclaw.ai is always included. Set to "" to allow only openclaw.ai.
-squid_allowed_domains: "api.anthropic.com,api.openai.com,generativelanguage.googleapis.com,openrouter.ai,api.x.ai"
+allowed_domains: "api.anthropic.com,api.openai.com,generativelanguage.googleapis.com,openrouter.ai,api.x.ai"
+
+# External origin for server deployments (e.g. https://myclaw.example.com).
+# Added to gateway.controlUi.allowedOrigins alongside https://localhost.
+# Leave empty for local-only use.
+external_origin: ""
 `
 }

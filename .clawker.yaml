@@ -1,5 +1,6 @@
 # Clawker configuration for openclaw-docker
 # Go CLI that generates OpenClaw Docker deployment artifacts
+# Learn more about Clawker at https://clawker.dev; https://docs.clawker.dev; https://github.com/schmitthub/clawker
 
 build:
   image: "buildpack-deps:bookworm-scm"
@@ -101,6 +102,7 @@ security:
       - registry.npmjs.org
       - openclaw.ai
       - astral.sh
+      - docs.openclaw.ai
   docker_socket: true
   git_credentials:
     forward_https: true

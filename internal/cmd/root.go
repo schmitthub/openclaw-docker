@@ -27,9 +27,8 @@ type runtimeOptions struct {
 	OpenClawGatewayBind  string
 	OpenClawImage        string
 	OpenClawGatewayToken string
-	OpenClawExtraMounts  string
-	OpenClawHomeVolume   string
-	SquidAllowedDomains  string
+	AllowedDomains       string
+	ExternalOrigin       string
 }
 
 var rootOpts runtimeOptions
@@ -81,9 +80,8 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		OpenClawGatewayBind:  "lan",
 		OpenClawImage:        "openclaw:local",
 		OpenClawGatewayToken: "",
-		OpenClawExtraMounts:  "",
-		OpenClawHomeVolume:   "",
-		SquidAllowedDomains:  "api.anthropic.com,api.openai.com,generativelanguage.googleapis.com,openrouter.ai,api.x.ai",
+		AllowedDomains:       "api.anthropic.com,api.openai.com,generativelanguage.googleapis.com,openrouter.ai,api.x.ai",
+		ExternalOrigin:       "",
 	}
 
 	if rootOpts.ConfigPath != "" {
@@ -128,14 +126,11 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 		if fileCfg.OpenClawGatewayToken != "" {
 			merged.OpenClawGatewayToken = fileCfg.OpenClawGatewayToken
 		}
-		if fileCfg.OpenClawExtraMounts != "" {
-			merged.OpenClawExtraMounts = fileCfg.OpenClawExtraMounts
+		if fileCfg.AllowedDomains != "" {
+			merged.AllowedDomains = fileCfg.AllowedDomains
 		}
-		if fileCfg.OpenClawHomeVolume != "" {
-			merged.OpenClawHomeVolume = fileCfg.OpenClawHomeVolume
-		}
-		if fileCfg.SquidAllowedDomains != "" {
-			merged.SquidAllowedDomains = fileCfg.SquidAllowedDomains
+		if fileCfg.ExternalOrigin != "" {
+			merged.ExternalOrigin = fileCfg.ExternalOrigin
 		}
 	}
 
@@ -179,17 +174,14 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	if cmd.Flags().Changed("openclaw-gateway-token") {
 		merged.OpenClawGatewayToken = rootOpts.OpenClawGatewayToken
 	}
-	if cmd.Flags().Changed("openclaw-extra-mounts") {
-		merged.OpenClawExtraMounts = rootOpts.OpenClawExtraMounts
-	}
-	if cmd.Flags().Changed("openclaw-home-volume") {
-		merged.OpenClawHomeVolume = rootOpts.OpenClawHomeVolume
-	}
-	if cmd.Flags().Changed("squid-allowed-domains") {
-		merged.SquidAllowedDomains = rootOpts.SquidAllowedDomains
+	if cmd.Flags().Changed("allowed-domains") {
+		merged.AllowedDomains = rootOpts.AllowedDomains
 	}
 	if cmd.Flags().Changed("openclaw-version") {
 		merged.Version = rootOpts.Version
+	}
+	if cmd.Flags().Changed("external-origin") {
+		merged.ExternalOrigin = rootOpts.ExternalOrigin
 	}
 
 	merged.OutputDir = strings.TrimSpace(merged.OutputDir)
@@ -202,9 +194,8 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	merged.OpenClawGatewayBind = strings.TrimSpace(merged.OpenClawGatewayBind)
 	merged.OpenClawImage = strings.TrimSpace(merged.OpenClawImage)
 	merged.OpenClawGatewayToken = strings.TrimSpace(merged.OpenClawGatewayToken)
-	merged.OpenClawExtraMounts = strings.TrimSpace(merged.OpenClawExtraMounts)
-	merged.OpenClawHomeVolume = strings.TrimSpace(merged.OpenClawHomeVolume)
-	merged.SquidAllowedDomains = strings.TrimSpace(merged.SquidAllowedDomains)
+	merged.AllowedDomains = strings.TrimSpace(merged.AllowedDomains)
+	merged.ExternalOrigin = strings.TrimSpace(merged.ExternalOrigin)
 
 	if merged.Version == "" {
 		merged.Version = "latest"
@@ -244,14 +235,11 @@ func applyEnvOverrides(opts *runtimeOptions) error {
 	if value, ok := getenvTrim("OPENCLAW_DOCKER_OPENCLAW_GATEWAY_TOKEN"); ok {
 		opts.OpenClawGatewayToken = value
 	}
-	if value, ok := getenvTrim("OPENCLAW_DOCKER_OPENCLAW_EXTRA_MOUNTS"); ok {
-		opts.OpenClawExtraMounts = value
+	if value, ok := getenvTrim("OPENCLAW_DOCKER_ALLOWED_DOMAINS"); ok {
+		opts.AllowedDomains = value
 	}
-	if value, ok := getenvTrim("OPENCLAW_DOCKER_OPENCLAW_HOME_VOLUME"); ok {
-		opts.OpenClawHomeVolume = value
-	}
-	if value, ok := getenvTrim("OPENCLAW_DOCKER_SQUID_ALLOWED_DOMAINS"); ok {
-		opts.SquidAllowedDomains = value
+	if value, ok := getenvTrim("OPENCLAW_DOCKER_EXTERNAL_ORIGIN"); ok {
+		opts.ExternalOrigin = value
 	}
 
 	if value, ok := getenvTrim("OPENCLAW_DOCKER_CLEANUP"); ok {

@@ -8,54 +8,54 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 |----------|--------|
 | `Generate(opts Options)` | Orchestrates all writes |
 | `dockerfileFor(opts)` | Dockerfile content (`fmt.Sprintf` template) |
-| `composeFileContent()` | compose.yaml (string-joined lines) |
+| `entrypointContent()` | entrypoint.sh: iptables rules + gosu drop to node |
+| `composeFileContent(opts)` | compose.yaml (string-joined lines) |
 | `openClawEnvFileContent(opts)` | .env.openclaw (`fmt.Sprintf` template) |
 | `setupScriptContent(opts)` | setup.sh (`fmt.Sprintf` template) |
 | `writeComposeArtifacts(opts)` | Writes compose.yaml + .env.openclaw |
 | `writeSetupScript(opts)` | Writes setup.sh with 0755 perms |
-| `squidDockerfileContent()` | Dockerfile.squid content |
-| `squidConfContent(opts)` | squid.conf with SSL bump + domain ACLs |
+| `writeEntrypoint(opts)` | Writes entrypoint.sh with 0755 perms |
+| `envoyConfigContent(opts)` | envoy.yaml with ingress + egress listeners |
 | `openClawJSONContent(opts)` | openclaw.json with gateway config |
-| `generateCA(opts)` | CA cert+key generation (in `ca.go`) |
-| `generateNginxCert(opts)` | TLS server cert signed by CA (in `ca.go`) |
-| `nginxConfContent(opts)` | nginx.conf with HTTPS reverse proxy |
-| `writeNginxConf(opts)` | Writes nginx.conf |
+| `generateTLSCert(opts)` | Self-signed TLS cert for Envoy ingress (in `ca.go`) |
 
 ## Options Struct
 
 `render.Options` carries all configuration from CLI into generation.
 `ConfirmWrite func(path string) error` — write safety callback (nil in tests).
-`SquidAllowedDomains string` — comma-separated domains for squid whitelist.
+`AllowedDomains string` — comma-separated domains for Envoy egress whitelist.
 
 ## Design Decisions
 
 - All content is built via `fmt.Sprintf` with Go string templates (not `text/template`)
-- Compose uses `build:` directive for gateway/squid, stock `nginx:alpine` for nginx
-- nginx is the sole ingress — publishes port 443, gateway has no published ports
-- Dockerfile uses `node` user from `node:22-bookworm` base
-- No ENTRYPOINT — CMD only
+- Compose uses `build:` directive for gateway, stock `envoyproxy/envoy` image for Envoy
+- Gateway has `cap_add: [NET_ADMIN]` for root-owned iptables setup in entrypoint
+- Entrypoint runs as root, sets iptables (OUTPUT DROP + allow Envoy only), then `gosu node`
+- Envoy is the unified ingress/egress proxy — publishes port 443, gateway has no published ports
+- Envoy egress listener on port 10000 handles HTTP CONNECT with domain ACL
+- No SSL bump / MITM — TLS is end-to-end, domain filtering via CONNECT authority
+- `HTTP_PROXY`/`HTTPS_PROXY` env vars are convenience for proxy-aware tools, not the security boundary
+- The security boundary is: Docker `internal: true` network + root-owned iptables rules
 - setup.sh must be Bash 3.2 compatible (macOS)
 - Defaults for config/workspace dirs use `/home/node/.openclaw`
-- CA cert+key preserved across re-runs (idempotent)
-- nginx cert signed by the same CA, also preserved across re-runs
-- Squid uses `squid-openssl` package for SSL bump support
-- `openclaw.ai` always included in squid domain whitelist
-- mTLS directives in nginx.conf are commented out by default (toggle on for Cloudflare etc.)
+- TLS cert preserved across re-runs (idempotent)
+- `openclaw.ai` always included in Envoy domain whitelist
 
 ## Generated Output
 
 ```
 <output>/
-├── Dockerfile         # 0644, lean node:22-bookworm
-├── Dockerfile.squid   # 0644, squid-openssl + ssl_db init
-├── compose.yaml       # 0644, nginx + squid + gateway
-├── .env.openclaw      # 0644, runtime env vars + proxy config
-├── setup.sh           # 0755, token gen + openclaw.json seeding + compose up
-├── squid.conf         # 0644, SSL bump + egress whitelist ACLs
-├── openclaw.json      # 0644, pre-seeded gateway config
-├── ca-cert.pem        # 0644, self-signed CA cert
-├── ca-key.pem         # 0600, CA private key
-├── nginx.conf         # 0644, HTTPS reverse proxy + commented mTLS
-├── nginx-cert.pem     # 0644, TLS server cert signed by CA
-└── nginx-key.pem      # 0600, TLS server key
+├── compose/
+│   ├── envoy/
+│   │   ├── envoy.yaml          # 0644, ingress+egress proxy config
+│   │   ├── server-cert.pem     # 0644, self-signed TLS cert
+│   │   └── server-key.pem      # 0600, TLS key
+│   └── openclaw/
+│       ├── Dockerfile           # 0644, node:22-bookworm + iptables + gosu
+│       ├── entrypoint.sh        # 0755, iptables setup + drop to node
+│       └── openclaw.json        # 0644, pre-seeded gateway config
+├── compose.yaml                 # 0644, envoy + gateway
+├── .env.openclaw                # 0644, runtime env vars + proxy config
+├── setup.sh                     # 0755, token gen + compose up
+└── manifest.json                # 0644, resolved version metadata
 ```
