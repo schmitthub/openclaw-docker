@@ -54,7 +54,7 @@ func TestRenderProducesAllFiles(t *testing.T) {
 		t.Fatalf("render failed: %v", result.Err)
 	}
 
-	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem"} {
+	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem", "nginx.conf", "nginx-cert.pem", "nginx-key.pem"} {
 		path := filepath.Join(outputDir, name)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -205,7 +205,7 @@ func TestRenderComposeContent(t *testing.T) {
 	}
 	body := string(content)
 
-	for _, svc := range []string{"squid:", "openclaw-gateway:"} {
+	for _, svc := range []string{"nginx:", "squid:", "openclaw-gateway:"} {
 		if !strings.Contains(body, svc) {
 			t.Errorf("compose.yaml missing service %q", svc)
 		}
@@ -229,6 +229,11 @@ func TestRenderComposeContent(t *testing.T) {
 	}
 
 	for _, s := range []string{
+		"nginx:alpine",
+		"nginx.conf:/etc/nginx/conf.d/default.conf",
+		"nginx-cert.pem:/etc/nginx/certs/server.pem",
+		"nginx-key.pem:/etc/nginx/certs/server-key.pem",
+		"443:443",
 		"squid.conf:/etc/squid/squid.conf",
 		"ca-cert.pem:/etc/squid/ca-cert.pem",
 		"ca-key.pem:/etc/squid/ca-key.pem",
@@ -415,7 +420,7 @@ func TestGenerateFullPipeline(t *testing.T) {
 	}
 
 	// All artifacts should exist.
-	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem"} {
+	for _, name := range []string{"Dockerfile", "compose.yaml", ".env.openclaw", "setup.sh", "Dockerfile.squid", "squid.conf", "openclaw.json", "ca-cert.pem", "ca-key.pem", "nginx.conf", "nginx-cert.pem", "nginx-key.pem"} {
 		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
 			t.Errorf("expected %s to exist after generate: %v", name, err)
 		}
@@ -598,5 +603,101 @@ func TestRenderCAGeneration(t *testing.T) {
 	}
 	if string(certData) != string(certData2) {
 		t.Error("CA cert changed between renders — should be preserved")
+	}
+}
+
+func TestRenderNginxConfContent(t *testing.T) {
+	h := &harness.Harness{T: t}
+	setup := h.NewIsolatedFS()
+
+	versionsFile := seedManifest(t, setup.CacheDir)
+	outputDir := filepath.Join(setup.BaseDir, "deploy")
+
+	result := h.Run(
+		"render",
+		"--dangerous-inline",
+		"--versions-file", versionsFile,
+		"--output", outputDir,
+	)
+	if result.Err != nil {
+		t.Fatalf("render failed: %v", result.Err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(outputDir, "nginx.conf"))
+	if err != nil {
+		t.Fatalf("read nginx.conf: %v", err)
+	}
+	body := string(content)
+
+	for _, s := range []string{
+		"upstream openclaw_gateway",
+		"proxy_pass http://openclaw_gateway",
+		"ssl_certificate",
+		"ssl_certificate_key",
+		"Upgrade",
+		"proxy_http_version 1.1",
+		"ssl_client_certificate",
+		"ssl_verify_client",
+		"proxy_read_timeout",
+	} {
+		if !strings.Contains(body, s) {
+			t.Errorf("nginx.conf missing expected content: %q", s)
+		}
+	}
+}
+
+func TestRenderNginxCertGeneration(t *testing.T) {
+	h := &harness.Harness{T: t}
+	setup := h.NewIsolatedFS()
+
+	versionsFile := seedManifest(t, setup.CacheDir)
+	outputDir := filepath.Join(setup.BaseDir, "deploy")
+
+	result := h.Run(
+		"render",
+		"--dangerous-inline",
+		"--versions-file", versionsFile,
+		"--output", outputDir,
+	)
+	if result.Err != nil {
+		t.Fatalf("render failed: %v", result.Err)
+	}
+
+	certPath := filepath.Join(outputDir, "nginx-cert.pem")
+	keyPath := filepath.Join(outputDir, "nginx-key.pem")
+
+	certData, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read nginx-cert.pem: %v", err)
+	}
+	keyData, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("read nginx-key.pem: %v", err)
+	}
+
+	if !strings.Contains(string(certData), "BEGIN CERTIFICATE") {
+		t.Error("nginx-cert.pem missing PEM certificate header")
+	}
+	if !strings.Contains(string(keyData), "BEGIN EC PRIVATE KEY") {
+		t.Error("nginx-key.pem missing PEM EC private key header")
+	}
+
+	// Re-run should preserve the same cert (idempotency).
+	result = h.Run(
+		"render",
+		"--dangerous-inline",
+		"--versions-file", versionsFile,
+		"--output", outputDir,
+	)
+	if result.Err != nil {
+		t.Fatalf("second render failed: %v", result.Err)
+	}
+
+	certData2, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read nginx-cert.pem after second render: %v", err)
+	}
+	if string(certData) != string(certData2) {
+		t.Error("nginx cert changed between renders — should be preserved")
 	}
 }

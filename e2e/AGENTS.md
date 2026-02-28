@@ -6,7 +6,7 @@ End-to-end generation tests. Package name: `test`.
 
 | File | Purpose |
 |------|---------|
-| `generate_test.go` | 14 tests covering render and full generate pipeline |
+| `generate_test.go` | 16 tests covering render and full generate pipeline |
 | `harness/harness.go` | Test harness: isolated FS + Cobra CLI execution |
 
 ## Running
@@ -32,10 +32,10 @@ All other tests use seeded manifests and don't require network access.
 
 ## Current Test Coverage
 
-- File existence and non-emptiness (9 artifacts including CA cert/key)
+- File existence and non-emptiness (12 artifacts including CA, nginx certs)
 - Dockerfile content (base image, version, forbidden content)
 - Custom apt packages
-- Compose services/networks/build directive, squid mounts, NODE_EXTRA_CA_CERTS, named volumes
+- Compose services (nginx, squid, gateway), networks, nginx/squid mounts, NODE_EXTRA_CA_CERTS, named volumes
 - Env file variables and proxy config
 - Setup script permissions, shebang, expected content
 - Custom options propagation (port, bind)
@@ -45,6 +45,8 @@ All other tests use seeded manifests and don't require network access.
 - Squid allowed domains propagation via --squid-allowed-domains
 - openclaw.json content (gateway, mode, bind, auth, token placeholder)
 - CA cert generation (valid PEM, idempotent across re-runs)
+- nginx.conf content (upstream, proxy_pass, SSL, WebSocket upgrade, commented mTLS)
+- nginx cert generation (valid PEM, signed by CA, idempotent across re-runs)
 
 ## Test Pattern
 

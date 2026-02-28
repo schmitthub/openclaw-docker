@@ -17,6 +17,9 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 | `squidConfContent(opts)` | squid.conf with SSL bump + domain ACLs |
 | `openClawJSONContent(opts)` | openclaw.json with gateway config |
 | `generateCA(opts)` | CA cert+key generation (in `ca.go`) |
+| `generateNginxCert(opts)` | TLS server cert signed by CA (in `ca.go`) |
+| `nginxConfContent(opts)` | nginx.conf with HTTPS reverse proxy |
+| `writeNginxConf(opts)` | Writes nginx.conf |
 
 ## Options Struct
 
@@ -27,14 +30,17 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 ## Design Decisions
 
 - All content is built via `fmt.Sprintf` with Go string templates (not `text/template`)
-- Compose uses `build:` directive, never `image:` tag
+- Compose uses `build:` directive for gateway/squid, stock `nginx:alpine` for nginx
+- nginx is the sole ingress — publishes port 443, gateway has no published ports
 - Dockerfile uses `node` user from `node:22-bookworm` base
 - No ENTRYPOINT — CMD only
 - setup.sh must be Bash 3.2 compatible (macOS)
 - Defaults for config/workspace dirs use `/home/node/.openclaw`
 - CA cert+key preserved across re-runs (idempotent)
+- nginx cert signed by the same CA, also preserved across re-runs
 - Squid uses `squid-openssl` package for SSL bump support
 - `openclaw.ai` always included in squid domain whitelist
+- mTLS directives in nginx.conf are commented out by default (toggle on for Cloudflare etc.)
 
 ## Generated Output
 
@@ -42,11 +48,14 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 <output>/
 ├── Dockerfile         # 0644, lean node:22-bookworm
 ├── Dockerfile.squid   # 0644, squid-openssl + ssl_db init
-├── compose.yaml       # 0644, squid proxy + gateway
+├── compose.yaml       # 0644, nginx + squid + gateway
 ├── .env.openclaw      # 0644, runtime env vars + proxy config
 ├── setup.sh           # 0755, token gen + openclaw.json seeding + compose up
 ├── squid.conf         # 0644, SSL bump + egress whitelist ACLs
 ├── openclaw.json      # 0644, pre-seeded gateway config
-├── ca-cert.pem        # 0644, self-signed CA cert (mounted into both containers)
-└── ca-key.pem         # 0600, CA private key (mounted into squid only)
+├── ca-cert.pem        # 0644, self-signed CA cert
+├── ca-key.pem         # 0600, CA private key
+├── nginx.conf         # 0644, HTTPS reverse proxy + commented mTLS
+├── nginx-cert.pem     # 0644, TLS server cert signed by CA
+└── nginx-key.pem      # 0600, TLS server key
 ```

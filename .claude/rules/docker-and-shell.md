@@ -5,7 +5,7 @@ globs: ["**/Dockerfile*", "**/compose*.yaml", "**/.env*", "**/*.sh", "internal/r
 # Docker & Shell Artifact Rules
 
 ## Generated Artifacts
-The CLI generates nine files to `<output>/` (default `./openclaw-deploy`):
+The CLI generates twelve files to `<output>/` (default `./openclaw-deploy`):
 
 | File | Permissions | Purpose |
 |------|-------------|---------|
@@ -18,6 +18,9 @@ The CLI generates nine files to `<output>/` (default `./openclaw-deploy`):
 | `openclaw.json` | 0644 | Pre-seeded gateway config (token placeholder replaced by setup.sh) |
 | `ca-cert.pem` | 0644 | Self-signed CA cert for squid SSL bump (mounted into both containers) |
 | `ca-key.pem` | 0600 | CA private key (mounted into squid only) |
+| `nginx.conf` | 0644 | HTTPS reverse proxy with WebSocket support + commented-out mTLS |
+| `nginx-cert.pem` | 0644 | TLS server cert signed by CA (for nginx HTTPS on port 443) |
+| `nginx-key.pem` | 0600 | TLS server key for nginx |
 
 ## Dockerfile Conventions
 - Base: `node:22-bookworm` (matches official OpenClaw Docker pattern)
@@ -28,11 +31,13 @@ The CLI generates nine files to `<output>/` (default `./openclaw-deploy`):
 - `OPENCLAW_DOCKER_APT_PACKAGES` ARG for optional packages
 
 ## Compose Conventions
-- Services build from local Dockerfiles (`Dockerfile` for gateway, `Dockerfile.squid` for squid)
-- No `image:` tag references — always local build
+- nginx (`nginx:alpine`) is the sole ingress — publishes port 443, proxies to gateway
+- Gateway and squid build from local Dockerfiles; nginx uses stock image
+- Gateway has no published ports — only accessible via nginx on internal network
 - Squid proxy on both `openclaw-internal` and `openclaw-egress` networks
 - Gateway on `openclaw-internal` (internal: true) only — all egress routes through squid
 - Squid SSL-bumps TLS with CA cert; gateway trusts it via `NODE_EXTRA_CA_CERTS`
+- nginx TLS cert is signed by the same CA; users can swap for production certs
 - Named volumes: `squid-log`, `squid-cache` for squid persistence
 - Env vars sourced from `.env.openclaw` via `env_file`
 
@@ -54,6 +59,8 @@ Generation lives in `internal/render/render.go` and `internal/render/ca.go`:
 - `squidConfContent(opts)` — squid.conf with SSL bump + domain ACLs
 - `openClawJSONContent(opts)` — openclaw.json with gateway config
 - `generateCA(opts)` — CA cert+key generation (in `ca.go`, preserves existing across re-runs)
+- `generateNginxCert(opts)` — TLS server cert signed by CA (in `ca.go`)
+- `nginxConfContent(opts)` — nginx.conf with HTTPS reverse proxy + mTLS comments
 
 ## Validation
 ```bash
