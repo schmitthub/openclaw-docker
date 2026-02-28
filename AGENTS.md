@@ -14,7 +14,7 @@ Primary goals:
 
 - The core artifact in this repo is Docker-related build configuration.
 - Dockerfiles in `dockerfiles/` are generated artifacts from the CLI.
-- The CLI defaults output to `./openclawdockerfiles` when `--output` is omitted.
+- The CLI defaults output to `./openclaw-deploy` when `--output` is omitted.
 - Version metadata comes from npm package `openclaw` via the Go CLI (`main.go`).
 - Changes should prioritize compatibility, determinism, and minimal image complexity.
 - Prefer small, focused edits rather than broad refactors.

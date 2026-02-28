@@ -20,7 +20,7 @@ templates_dir: ./build/templates
 # - <output>/<version>/<variant>/Dockerfile
 # - <output>/compose.yaml
 # - <output>/.env.openclaw
-output: ./openclawdockerfiles
+output: ./openclaw-deploy
 
 # Cleanup is defensive-only (prints warning, no delete operations)
 cleanup: false

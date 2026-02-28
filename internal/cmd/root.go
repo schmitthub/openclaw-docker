@@ -48,7 +48,7 @@ func NewRootCmd(buildVersion, buildDate string) *cobra.Command {
 	}
 
 	cmd.PersistentFlags().StringVarP(&rootOpts.ConfigPath, "config", "f", "", "Path to YAML config file")
-	cmd.PersistentFlags().StringVarP(&rootOpts.OutputDir, "output", "o", "", "Dockerfile output directory (defaults to ./openclawdockerfiles)")
+	cmd.PersistentFlags().StringVarP(&rootOpts.OutputDir, "output", "o", "", "Dockerfile output directory (defaults to ./openclaw-deploy)")
 	cmd.PersistentFlags().StringVar(&rootOpts.VersionsFile, "versions-file", "", "Path to versions manifest JSON")
 	cmd.PersistentFlags().StringVar(&rootOpts.TemplatesDir, "templates-dir", "", "Template helper scripts directory used in generated Dockerfiles")
 	cmd.PersistentFlags().BoolVar(&rootOpts.Debug, "debug", false, "Enable debug logging")
@@ -83,7 +83,7 @@ func mergedOptions(cmd *cobra.Command) (runtimeOptions, error) {
 	}
 
 	merged := runtimeOptions{
-		OutputDir:     filepath.Join(cwd, "openclawdockerfiles"),
+		OutputDir:     filepath.Join(cwd, "openclaw-deploy"),
 		VersionsFile:  defaultVersionsFilePath(),
 		TemplatesDir:  "./build/templates",
 		Cleanup:       false,

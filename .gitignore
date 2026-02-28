@@ -31,3 +31,4 @@ Temporary Items
 .cache/
 bin/
 openclawdockerfiles/
+openclaw-deploy/

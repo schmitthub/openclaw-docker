@@ -128,7 +128,7 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scr
 ### Output behavior
 
 - `--output|-o` controls Dockerfile output root.
-- If omitted, output defaults to `./openclawdockerfiles`.
+- If omitted, output defaults to `./openclaw-deploy`.
 - Generation is additive and overwrite-only; existing generated files can be replaced, but directories are not deleted.
 - Output root includes generated `compose.yaml` and `.env.openclaw` for runtime compose usage.
 - `--cleanup` prints a defensive warning with the target directory and still does not perform deletes.
