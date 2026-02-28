@@ -1,162 +1,243 @@
 # openclaw-docker
 
-![Go 1.22](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)
-![Cobra 1.8.1](https://img.shields.io/badge/Cobra-1.8.1-38BDAE)
-![Semver 3.3.0](https://img.shields.io/badge/Masterminds%2Fsemver-3.3.0-5A67D8)
-![YAML v3.0.1](https://img.shields.io/badge/yaml.v3-3.0.1-CB171E)
-![GoReleaser v2](https://img.shields.io/badge/GoReleaser-v2-00ADD8)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-supported-6E56CF)](https://docs.openclaw.ai/install/docker)
 ![macOS](https://img.shields.io/badge/macOS-supported-000000?logo=apple&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/schmitthub/openclaw-docker)
 
-CLI for generating OpenClaw Docker deployment artifacts.
+CLI that generates a hardened Docker Compose stack for [OpenClaw](https://openclaw.ai) with network-level egress isolation via Envoy proxy.
 
-## Overview
-
-- Standalone Go CLI (Cobra) with entrypoint in `main.go`.
-- Resolves a single OpenClaw version from npm package `openclaw` (dist-tag or semver partial).
-- Generates a lean Dockerfile based on `node:22-bookworm` at `<output>/Dockerfile`.
-- Generates `compose.yaml`, `.env.openclaw`, and `setup.sh` at the output root.
-- Generated compose uses a `squid` proxy and an internal-only app network for egress control.
-- Installs OpenClaw in images via `curl -fsSL https://openclaw.ai/install.sh | bash`.
-- Includes CLI build metadata and a `version` command.
-- Checks for newer GitHub releases and shows upgrade hints after command execution.
-- Uses defensive write prompts by default for overwrite operations.
-
-## Output Structure
+## Architecture
 
 ```
-<output>/
-├── Dockerfile         # Lean node:22-bookworm based Dockerfile
-├── compose.yaml       # Docker Compose with squid proxy
-├── .env.openclaw      # Environment variables for compose
-└── setup.sh           # Helper script for build/pull, token gen, compose up
+┌─────────────────────────────────────────────────────────────────────┐
+│  Host                                                               │
+│                                                                     │
+│   Browser ─── https://localhost ──┐                                 │
+│                                   │                                 │
+│   ┌───────────────────────────────┼───────────────────────────────┐ │
+│   │  openclaw-egress network      │                               │ │
+│   │                               ▼ :443                          │ │
+│   │                  ┌────────────────────────┐                   │ │
+│   │    Internet ◄──► │        Envoy           │                   │ │
+│   │   (allowed       │  • TLS termination     │                   │ │
+│   │    domains       │  • X-Forwarded-For     │                   │ │
+│   │    only)         │  • WebSocket upgrade   │                   │ │
+│   │                  │  • Domain whitelist ACL │                   │ │
+│   │                  └───────────┬────────────┘                   │ │
+│   └──────────────────────────────┼────────────────────────────────┘ │
+│   ┌──────────────────────────────┼────────────────────────────────┐ │
+│   │  openclaw-internal network   │  (internal: true — NO default  │ │
+│   │                              │   route to the internet)       │ │
+│   │                              ▼ :10000 (egress)                │ │
+│   │   ┌──────────────────────────────────────────┐                │ │
+│   │   │         openclaw-gateway                  │                │ │
+│   │   │  • OpenClaw + pnpm + bun                 │                │ │
+│   │   │  • iptables OUTPUT DROP (root-owned)     │                │ │
+│   │   │  • Only allows: loopback, DNS, Envoy     │                │ │
+│   │   │  • Drops to node user via gosu           │                │ │
+│   │   │  • HTTPS_PROXY=http://envoy:10000        │                │ │
+│   │   └──────────────────────────────────────────┘                │ │
+│   │                                                               │ │
+│   │   ┌──────────────────────────────────────────┐                │ │
+│   │   │         openclaw-cli                      │                │ │
+│   │   │  • Same image, entrypoint: ["openclaw"]  │                │ │
+│   │   │  • Config management (onboard, config)   │                │ │
+│   │   │  • Channel setup (WhatsApp, Telegram)    │                │ │
+│   │   │  • Run-and-exit (no restart policy)      │                │ │
+│   │   └──────────────────────────────────────────┘                │ │
+│   └───────────────────────────────────────────────────────────────┘ │
+│                                                                     │
+│   data/config/    ← bind-mounted config (openclaw.json, identity/) │
+│   data/workspace/ ← bind-mounted workspace                         │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Scope
+**Three layers of egress defense:**
 
-- In scope: generating deployment artifacts that make OpenClaw easy to launch securely.
-- Out of scope: registry publishing workflows (Docker Hub/GHCR push automation).
+1. **Docker `internal: true` network** — gateway has no default route to the internet. There is no IP to reach.
+2. **Root-owned iptables rules** — `OUTPUT DROP` default policy. Only loopback, Docker DNS, and Envoy are allowed. The `node` user cannot modify these rules.
+3. **Envoy domain whitelist** — egress listener only tunnels HTTPS CONNECT to whitelisted domains. Everything else gets 403. No SSL bump — TLS is end-to-end.
 
-## Version and tag resolution
+## Quickstart
 
-- The CLI queries npm package metadata from `openclaw`.
-- Accepts a single `--openclaw-version` value (dist-tag like `latest` or semver partial like `2026.2`).
-- Dist-tags are resolved first; if not a dist-tag, semver matching is used.
-- Resolved version metadata is written to `$XDG_CACHE_HOME/openclaw-docker/versions.json`.
-- If `XDG_CACHE_HOME` is not set, the fallback path is `~/.cache/openclaw-docker/versions.json`.
+### Prerequisites
 
-## Common commands
+- [Go 1.25+](https://go.dev/dl/) (to build the CLI)
+- [Docker](https://docs.docker.com/get-docker/) with `docker compose` v2
+
+### 1. Build the CLI
 
 ```bash
-# generate all artifacts (default version: latest)
-go run .
-
-# print CLI version
-go run . --version
-
-# explicit OpenClaw version
-go run . --openclaw-version latest
-
-# explicit output directory
-go run . --openclaw-version latest --output ./openclaw-deploy
-
-# config file (explicit path only)
-go run . --config ./config.yaml
-
-# skip per-write prompts (non-interactive/CI)
-go run . --dangerous-inline --openclaw-version latest
-
-# bake setup defaults into generated Dockerfile
-go run . --dangerous-inline \
-  --openclaw-version latest \
-  --docker-apt-packages "git-lfs ripgrep" \
-  --openclaw-config-dir /home/node/.openclaw \
-  --openclaw-workspace-dir /home/node/.openclaw/workspace \
-  --openclaw-gateway-port 18789 \
-  --openclaw-bridge-port 18790 \
-  --openclaw-gateway-bind lan \
-  --openclaw-image openclaw:local
-
-# explicit subcommands
-go run . resolve --openclaw-version latest
-go run . render --versions-file "$XDG_CACHE_HOME/openclaw-docker/versions.json" --output ./openclaw-deploy
+git clone https://github.com/schmitthub/openclaw-docker.git
+cd openclaw-docker
+go build -o openclaw-docker .
 ```
 
-### Local PATH setup (direnv)
-
-If you use `direnv`, bootstrap local CLI binary path with:
+Or install directly:
 
 ```bash
-cp .envrc.example .envrc
-direnv allow
-```
-
-This prepends `./bin` to `PATH` for this repository.
-
-### Install script (Linux)
-
-```bash
-# local install/update (default: ~/.local/bin)
 curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash
-
-# global install/update (/usr/local/bin)
-curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash -s -- --global
-
-# install a specific version
-curl -fsSL https://raw.githubusercontent.com/schmitthub/openclaw-docker/main/scripts/install.sh | bash -s -- --version v0.1.0
 ```
 
-### Update checks
-
-- The CLI always checks `schmitthub/openclaw-docker` GitHub releases with a cached interval and prints a concise upgrade hint when a newer CLI version exists.
-
-### Output behavior
-
-- `--output|-o` controls output root.
-- If omitted, output defaults to `./openclaw-deploy`.
-- Generation is additive and overwrite-only; existing generated files can be replaced, but directories are not deleted.
-- Output root includes `Dockerfile`, `compose.yaml`, `.env.openclaw`, and `setup.sh`.
-- Generated `.env.openclaw` includes proxy defaults (`OPENCLAW_HTTP_PROXY`, `OPENCLAW_HTTPS_PROXY`, `OPENCLAW_NO_PROXY`).
-- Generated `compose.yaml` attaches `openclaw-gateway` and `openclaw-cli` to an internal-only network and routes egress through `squid`.
-- `setup.sh` handles image build/pull, gateway token generation, and compose orchestration.
-- `--cleanup` prints a defensive warning with the target directory and still does not perform deletes.
-- By default, only overwrites prompt for confirmation; first-time file creates are written directly.
-- Use `--dangerous-inline` to bypass all write prompts (recommended for CI/non-interactive runs).
-
-### Compose usage
-
-- `compose.yaml` expects values from `.env.openclaw`.
-- Use the generated `setup.sh` or run Compose manually:
+### 2. Generate deployment artifacts
 
 ```bash
-docker compose --env-file ./.env.openclaw -f ./compose.yaml up -d
-docker compose --env-file ./.env.openclaw -f ./compose.yaml down
+openclaw-docker generate \
+  --openclaw-version latest \
+  --output ./openclaw-deploy \
+  --dangerous-inline
 ```
 
-### Config behavior
+This creates:
 
-- Config file path must be passed explicitly using `--config` or `-f`.
-- No automatic config discovery is performed.
-- Precedence is: `flags > environment variables > config file > defaults`.
-- Environment variable overrides use the `OPENCLAW_DOCKER_` prefix (examples):
-  - `OPENCLAW_DOCKER_OUTPUT`, `OPENCLAW_DOCKER_VERSIONS_FILE`, `OPENCLAW_DOCKER_VERSION`
-  - `OPENCLAW_DOCKER_DEBUG`, `OPENCLAW_DOCKER_CLEANUP`, `OPENCLAW_DOCKER_DANGEROUS_INLINE`
-  - `OPENCLAW_DOCKER_OPENCLAW_CONFIG_DIR`, `OPENCLAW_DOCKER_OPENCLAW_WORKSPACE_DIR`
-  - `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_PORT`, `OPENCLAW_DOCKER_OPENCLAW_BRIDGE_PORT`, `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_BIND`
-  - `OPENCLAW_DOCKER_OPENCLAW_IMAGE`, `OPENCLAW_DOCKER_OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_DOCKER_OPENCLAW_EXTRA_MOUNTS`, `OPENCLAW_DOCKER_OPENCLAW_HOME_VOLUME`
+```
+openclaw-deploy/
+├── compose/
+│   ├── envoy/
+│   │   ├── envoy.yaml          # Ingress + egress proxy config
+│   │   ├── server-cert.pem     # Self-signed TLS cert
+│   │   └── server-key.pem      # TLS private key
+│   └── openclaw/
+│       ├── Dockerfile           # node:22-bookworm + iptables + gosu + pnpm + bun
+│       └── entrypoint.sh        # iptables setup, drops to node user
+├── compose.yaml                 # 3 services: envoy, gateway, cli
+├── .env.openclaw                # Runtime env vars (token, ports, proxy)
+├── setup.sh                     # Interactive setup: build, onboard, configure, start
+└── manifest.json                # Resolved version metadata
+```
 
-## Repository structure
+### 3. Run setup
 
-- `main.go`: CLI entrypoint
-- `internal/cmd`: Cobra root/commands
-- `internal/config`: YAML config loading
-- `internal/versions`: npm resolution + manifest IO
-- `internal/render`: Dockerfile, compose, env, and setup script generation
-- `internal/update`: release update checks and local cache state
+```bash
+cd openclaw-deploy
+./setup.sh
+```
 
-## Future steps
+`setup.sh` does the following in order:
 
-- Add a lightweight e2e check that validates generated `compose.yaml` with `.env.openclaw`.
-- Add docs/examples for operating multiple generated outputs in parallel (custom `--output` per deployment).
+1. Creates `data/config/`, `data/workspace/`, `data/config/identity/`
+2. Generates a gateway token (or reuses existing)
+3. Writes token + ports to `.env.openclaw`
+4. Builds Docker images (`docker compose build`)
+5. Runs interactive onboarding (`openclaw onboard --no-install-daemon`)
+6. Sets gateway auth token via CLI (ensures config matches `.env.openclaw`)
+7. Disables device auth ([upstream bug](https://github.com/openclaw/openclaw/issues/25293) — incompatible with reverse proxy)
+8. Configures trusted proxies for Docker network CIDRs
+9. Sets Control UI allowed origins (`https://localhost`)
+10. Starts services (`docker compose up -d`)
+
+### 4. Open the dashboard
+
+The setup script prints the URL at the end:
+
+```
+https://localhost/?token=<your-token>
+```
+
+Accept the self-signed certificate warning in your browser.
+
+## Common Operations
+
+```bash
+# View gateway logs
+docker compose -f ./openclaw-deploy/compose.yaml logs -f openclaw-gateway
+
+# View gateway config
+docker compose -f ./openclaw-deploy/compose.yaml run --rm openclaw-cli config get gateway
+
+# Add WhatsApp (QR code)
+docker compose -f ./openclaw-deploy/compose.yaml run --rm openclaw-cli channels login
+
+# Add Telegram bot
+docker compose -f ./openclaw-deploy/compose.yaml run --rm openclaw-cli channels add --channel telegram --token <token>
+
+# Add Discord bot
+docker compose -f ./openclaw-deploy/compose.yaml run --rm openclaw-cli channels add --channel discord --token <token>
+
+# Restart after editing envoy.yaml
+docker compose -f ./openclaw-deploy/compose.yaml restart envoy
+
+# Stop everything
+docker compose -f ./openclaw-deploy/compose.yaml down
+```
+
+## Egress Domain Whitelist
+
+The Envoy egress proxy only allows HTTPS CONNECT to whitelisted domains. The default list includes:
+
+**Always included (hardcoded):**
+- `clawhub.com`
+- `registry.npmjs.org`
+
+**Default AI providers (configurable via `--allowed-domains`):**
+- `api.anthropic.com`
+- `api.openai.com`
+- `generativelanguage.googleapis.com`
+- `openrouter.ai`
+- `api.x.ai`
+
+`--allowed-domains` is **additive** — the hardcoded domains are always present. To add custom domains:
+
+```bash
+openclaw-docker generate \
+  --allowed-domains "api.anthropic.com,api.openai.com,custom.example.com" \
+  --output ./openclaw-deploy \
+  --dangerous-inline
+```
+
+To edit the whitelist after generation, modify `compose/envoy/envoy.yaml` directly and restart Envoy.
+
+## CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--openclaw-version` | `latest` | OpenClaw version (dist-tag or semver partial) |
+| `--output`, `-o` | `./openclaw-deploy` | Output directory |
+| `--allowed-domains` | AI providers | Comma-separated egress whitelist (additive) |
+| `--external-origin` | `""` | External origin for server deployments |
+| `--docker-apt-packages` | `""` | Extra apt packages for Dockerfile |
+| `--openclaw-gateway-port` | `18789` | Gateway port |
+| `--openclaw-gateway-bind` | `lan` | Gateway bind address |
+| `--config`, `-f` | none | YAML config file path |
+| `--dangerous-inline` | `false` | Skip write confirmation prompts |
+
+Config precedence: **flags > env vars (`OPENCLAW_DOCKER_*`) > config file > defaults**
+
+## Known Issues
+
+### Device auth behind reverse proxy
+
+The OpenClaw Control UI WebSocket connection bypasses `gateway.auth.mode` and always requires device pairing, even when running behind a trusted proxy with correct headers. This is an [upstream bug](https://github.com/openclaw/openclaw/issues/25293) ([#4941](https://github.com/openclaw/openclaw/issues/4941)).
+
+**Workaround:** `setup.sh` automatically sets `gateway.controlUi.dangerouslyDisableDeviceAuth: true`. Token auth + TLS termination at Envoy is the actual security boundary.
+
+## Development
+
+```bash
+go build .                  # compile CLI
+go test ./...               # run all tests
+go vet ./...                # static analysis
+make check                  # test + vet + lint
+
+# generate and validate artifacts
+go run . generate --openclaw-version latest --output ./openclaw-deploy --dangerous-inline
+docker compose -f ./openclaw-deploy/compose.yaml config
+```
+
+## Repository Structure
+
+```
+main.go                     # CLI entrypoint
+internal/
+  cmd/                      # Cobra commands (root, generate, config, version)
+  render/                   # Artifact generation (Dockerfile, compose, envoy, setup.sh)
+  versions/                 # npm version resolution, manifest I/O
+  config/                   # YAML config loading
+  build/                    # Build metadata (version/date via ldflags)
+  update/                   # GitHub release update checks
+  testenv/                  # Isolated test environments
+e2e/                        # End-to-end generation tests
+  harness/                  # Test harness (isolated FS + Cobra execution)
+```

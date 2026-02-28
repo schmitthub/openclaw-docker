@@ -35,16 +35,18 @@ All other tests use seeded manifests and don't require network access.
 
 - File existence and non-emptiness (9 artifacts in compose/<service>/ subdirs + root)
 - Output directory structure (compose/openclaw, compose/envoy; no squid/nginx)
-- Dockerfile content (base image, version, iptables, gosu, ENTRYPOINT, no proxy-preload)
+- Dockerfile content (base image, version, iptables, gosu, pnpm, bun, ENTRYPOINT, no proxy-preload)
 - Custom apt packages
-- Compose services (envoy, gateway), networks, build contexts, Envoy volumes, cap_add NET_ADMIN
+- Compose services (envoy, openclaw-gateway, openclaw-cli), networks, build contexts, Envoy volumes, cap_add NET_ADMIN
+- Compose gateway: command with --bind lan, init, restart, HOME/TERM env vars
+- Compose CLI: entrypoint ["openclaw"], stdin_open, tty, BROWSER echo
 - Env file variables and proxy config (envoy:10000, no NODE_OPTIONS, no dead vars)
-- Setup script permissions, shebang, expected content, envoy service start
-- Custom options propagation (port, bind)
+- Setup script permissions, shebang, onboarding flow, config set calls (auth token, trustedProxies, controlUi.allowedOrigins, dangerouslyDisableDeviceAuth), identity dir
+- Custom options propagation (port, bind, allowed-domains)
 - Idempotency (two runs = identical output)
 - Full pipeline (npm resolve + generate)
-- Envoy config content (ingress/egress listeners, domain whitelist, CONNECT, WebSocket)
-- Envoy allowed domains propagation via --allowed-domains
+- Envoy config content (ingress/egress listeners, domain whitelist, CONNECT, WebSocket, XFF forwarding)
+- Envoy allowed domains propagation via --allowed-domains (additive to hardcoded clawhub.com, registry.npmjs.org)
 - TLS cert generation (valid PEM, idempotent across re-runs)
 - Entrypoint content (iptables OUTPUT DROP, Docker DNS, Envoy allow, gosu node, executable)
 

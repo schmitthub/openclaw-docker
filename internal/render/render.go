@@ -300,7 +300,7 @@ RUN apt-get update && \
 
 RUN corepack enable && \
     corepack prepare pnpm@latest --activate && \
-    npm install -g --no-fund --no-audit bun
+    BUN_INSTALL=/usr/local curl -fsSL https://bun.sh/install | bash
 
 WORKDIR /app
 RUN chown node:node /app
@@ -523,6 +523,15 @@ docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
 docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
   config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null
 echo "Gateway token set (matches .env.openclaw)."
+
+echo ""
+echo "==> Disable device auth (not compatible with reverse proxy)"
+# Control UI always uses device pairing even behind a trusted proxy.
+# See: https://github.com/openclaw/openclaw/issues/25293
+#      https://github.com/openclaw/openclaw/issues/4941
+docker compose -f "$COMPOSE_FILE" run --rm openclaw-cli \
+  config set gateway.controlUi.dangerouslyDisableDeviceAuth true >/dev/null
+echo "Device auth disabled (token auth + TLS via Envoy is the security boundary)."
 
 echo ""
 echo "==> Trusted proxies (Docker network CIDRs)"

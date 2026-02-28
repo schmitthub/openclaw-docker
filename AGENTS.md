@@ -2,13 +2,13 @@
 
 ## Repository Overview
 
-This repository provides a Go CLI that generates **OpenClaw Docker deployment artifacts** — a Dockerfile, Compose configuration, environment file, and setup script.
+This repository provides a Go CLI that generates **OpenClaw Docker deployment artifacts** — a Dockerfile, Compose configuration, Envoy proxy config, environment file, and setup script.
 
 Primary goals:
 - Generate a lean, reproducible Dockerfile based on the official OpenClaw Docker pattern (`node:22-bookworm`).
 - Help users launch OpenClaw through Docker with secure-by-default settings using Envoy proxy for egress control.
-- Generate deployment-ready runtime artifacts (`Dockerfile`, `compose.yaml`, `.env.openclaw`, `setup.sh`).
-- Make it straightforward to maintain and update generation logic over time.
+- Generate deployment-ready runtime artifacts (see Output Structure below).
+- Mirror the official OpenClaw docker-setup.sh flow (onboarding, CLI-based config management) while layering Envoy-based network isolation on top.
 
 ## What Agents Should Assume
 
@@ -29,20 +29,59 @@ Primary goals:
 │   │   ├── server-cert.pem     # Self-signed TLS cert for ingress
 │   │   └── server-key.pem      # TLS key for ingress
 │   └── openclaw/
-│       ├── Dockerfile           # node:22-bookworm with iptables + gosu
+│       ├── Dockerfile           # node:22-bookworm + iptables + gosu + pnpm + bun
 │       └── entrypoint.sh        # Root-owned iptables setup, drops to node user
-├── compose.yaml                 # Docker Compose with envoy + gateway + cli
-├── .env.openclaw                # Environment variables for compose
+├── compose.yaml                 # 3 services: envoy, openclaw-gateway, openclaw-cli
+├── .env.openclaw                # Runtime env vars (token, ports, proxy config)
 ├── manifest.json                # Resolved version metadata
-└── setup.sh                     # Token gen, onboarding, compose up
+└── setup.sh                     # Build, onboard, configure, start
 ```
+
+## Compose Services
+
+| Service | Purpose | Network | Restart |
+|---------|---------|---------|---------|
+| `envoy` | TLS termination, ingress reverse proxy, egress domain whitelist | internal + egress | unless-stopped |
+| `openclaw-gateway` | OpenClaw gateway (AI agent runtime) | internal only | unless-stopped |
+| `openclaw-cli` | Config management, onboarding, channel setup (run-and-exit) | internal only | none |
+
+- `openclaw-gateway` uses the Dockerfile ENTRYPOINT (`entrypoint.sh` → iptables → gosu) with an explicit `command: ["openclaw", "gateway", "--bind", "lan", "--port", "18789"]`.
+- `openclaw-cli` overrides the entrypoint to `["openclaw"]` so `docker compose run --rm openclaw-cli <subcommand>` works directly.
+- Both gateway and CLI share the same image, volumes (`data/config`, `data/workspace`), and `env_file`.
+
+## Setup Flow (setup.sh)
+
+The generated `setup.sh` mirrors the official OpenClaw docker-setup.sh with Envoy additions:
+
+1. Create host dirs: `data/config/`, `data/workspace/`, `data/config/identity/`
+2. Generate or reuse gateway token
+3. Write token + ports to `.env.openclaw`
+4. `docker compose build`
+5. `docker compose run --rm openclaw-cli onboard --no-install-daemon` (interactive)
+6. `config set gateway.auth.mode token` + `config set gateway.auth.token <token>`
+7. `config set gateway.controlUi.dangerouslyDisableDeviceAuth true` (see Known Issues)
+8. `config set gateway.trustedProxies [Docker CIDRs]`
+9. `ensure_control_ui_allowed_origins` (sets `gateway.controlUi.allowedOrigins`)
+10. `docker compose up -d`
+
+Gateway configuration is managed entirely via `openclaw-cli config set/get` — there is no pre-generated `openclaw.json` template.
+
+## Known Issues
+
+### Device auth incompatible with reverse proxy
+
+The Control UI WebSocket connection bypasses `gateway.auth.mode` and always requires device pairing, even behind a correctly configured trusted proxy. This is an upstream bug:
+- [#25293](https://github.com/openclaw/openclaw/issues/25293) — Control UI ignores trusted-proxy auth mode
+- [#4941](https://github.com/openclaw/openclaw/issues/4941) — Dashboard "pairing required" in Docker
+
+**Workaround:** `setup.sh` sets `gateway.controlUi.dangerouslyDisableDeviceAuth: true`. Token auth + TLS termination at Envoy is the actual security boundary. This should be reverted when the upstream bug is fixed.
 
 ## Contribution Guidelines for Agents
 
 When modifying this repository:
 - Pin versions where stability matters; document why when pinning is non-obvious.
 - Avoid introducing unnecessary runtime dependencies.
-- The generated Dockerfile installs only `iptables` and `gosu` beyond base — no dev tools.
+- The generated Dockerfile installs `iptables`, `gosu`, `pnpm` (via corepack), and `bun` (via install script) beyond base.
 - Never weaken the egress isolation model (see Threat Model & Egress Security below).
 
 ## Validation Expectations
@@ -54,6 +93,7 @@ Before considering work complete, agents should:
 	- `docker compose -f ./openclaw-deploy/compose.yaml config`
 - Verify `openclaw-deploy/setup.sh` exists and is executable.
 - Ensure commands are non-interactive and CI-friendly.
+- Run `go test ./...` to verify all tests pass.
 
 ## Safety Model
 
@@ -92,21 +132,36 @@ network are.
 - Entrypoint must run as root, set iptables, then `exec gosu node "$@"` — never skip the drop.
 - `openclaw-internal` network must be `internal: true`.
 - Envoy is the only container on both internal and egress networks.
-- `openclaw.ai` is always included in the Envoy domain whitelist.
+- `clawhub.com` and `registry.npmjs.org` are always included in the Envoy domain whitelist.
+
+## Egress Domain Whitelist
+
+**Always included (hardcoded, cannot be removed):**
+- `clawhub.com`
+- `registry.npmjs.org`
+
+**Default AI providers (via `--allowed-domains`, additive):**
+- `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.x.ai`
+
+`--allowed-domains` is additive to the hardcoded domains. Duplicates are deduplicated automatically.
 
 ## Current Deployment Model
 
-- Generated `compose.yaml` includes `envoy` as unified ingress/egress proxy.
-- Envoy ingress listener (:443) terminates TLS and reverse-proxies to gateway with WebSocket support.
+- Generated `compose.yaml` includes 3 services: `envoy`, `openclaw-gateway`, `openclaw-cli`.
+- Envoy ingress listener (:443) terminates TLS with X-Forwarded-For forwarding (`use_remote_address: true`) and reverse-proxies to gateway with WebSocket support.
 - Envoy egress listener (:10000) acts as HTTP CONNECT forward proxy with domain whitelist ACL.
 - `openclaw-gateway` runs on an internal-only network (`internal: true`) — no direct internet access.
-- Gateway container starts as root to set iptables, then drops to `node` user via `gosu`.
-- `setup.sh` handles image build/pull, gateway token generation, and compose orchestration.
+- Gateway starts as root to set iptables, then drops to `node` user via `gosu`.
+- Gateway has explicit `command` with `--bind lan --port 18789` to ensure LAN binding (required for Envoy to reach it over Docker network).
+- `openclaw-cli` shares the same image/volumes but overrides `entrypoint: ["openclaw"]` for direct CLI access.
+- Gateway trusts Docker network CIDRs (`172.16.0.0/12`, `10.0.0.0/8`, `192.168.0.0/16`) via `trustedProxies` for correct client IP detection behind Envoy.
+- `setup.sh` handles image build, interactive onboarding, CLI-based config management, and compose orchestration.
 
 ## Future Steps
 
 - Add CI validation that checks generated compose/env pairs for parse correctness.
 - Keep deployment docs/examples aligned with flag changes (`--openclaw-version`, prompt semantics).
+- Remove `dangerouslyDisableDeviceAuth` workaround when upstream bug is fixed.
 
 ## Out of Scope (Unless Explicitly Requested)
 

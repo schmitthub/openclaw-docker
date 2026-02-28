@@ -9,7 +9,7 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 | `Generate(opts Options)` | Orchestrates all writes |
 | `dockerfileFor(opts)` | Dockerfile content (`fmt.Sprintf` template) |
 | `entrypointContent()` | entrypoint.sh: iptables rules + gosu drop to node |
-| `composeFileContent(opts)` | compose.yaml (string-joined lines) |
+| `composeFileContent(opts)` | compose.yaml (string-joined lines, 3 services) |
 | `openClawEnvFileContent(opts)` | .env.openclaw (`fmt.Sprintf` template) |
 | `setupScriptContent(opts)` | setup.sh (`fmt.Sprintf` template) |
 | `writeComposeArtifacts(opts)` | Writes compose.yaml + .env.openclaw |
@@ -27,18 +27,25 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 ## Design Decisions
 
 - All content is built via `fmt.Sprintf` with Go string templates (not `text/template`)
-- Compose uses `build:` directive for gateway, stock `envoyproxy/envoy` image for Envoy
+- Compose uses `build:` directive for gateway/CLI, stock `envoyproxy/envoy` image for Envoy
+- 3 compose services: `envoy`, `openclaw-gateway`, `openclaw-cli`
+- Gateway has explicit `command: ["openclaw", "gateway", "--bind", "lan", "--port", "<port>"]` for LAN binding
 - Gateway has `cap_add: [NET_ADMIN]` for root-owned iptables setup in entrypoint
+- Gateway has `init: true`, `restart: unless-stopped`, `HOME`/`TERM` env vars
+- CLI service overrides `entrypoint: ["openclaw"]` with `stdin_open`, `tty`, `init`, `BROWSER: echo`
 - Entrypoint runs as root, sets iptables (OUTPUT DROP + allow Envoy only), then `gosu node`
 - Envoy is the unified ingress/egress proxy — publishes port 443, gateway has no published ports
+- Envoy ingress forwards client IP via `use_remote_address: true` and `xff_num_trusted_hops: 0`
 - Envoy egress listener on port 10000 handles HTTP CONNECT with domain ACL
+- Egress whitelist: `clawhub.com` + `registry.npmjs.org` always hardcoded, `--allowed-domains` additive with dedup
 - No SSL bump / MITM — TLS is end-to-end, domain filtering via CONNECT authority
 - `HTTP_PROXY`/`HTTPS_PROXY` env vars are convenience for proxy-aware tools, not the security boundary
 - The security boundary is: Docker `internal: true` network + root-owned iptables rules
+- Dockerfile installs `pnpm` (corepack), `bun` (install script to /usr/local), and OpenClaw (npm)
+- setup.sh mirrors official docker-setup.sh: onboarding, CLI-based config management, no pre-generated openclaw.json
 - setup.sh must be Bash 3.2 compatible (macOS)
 - Defaults for config/workspace dirs use `/home/node/.openclaw`
 - TLS cert preserved across re-runs (idempotent)
-- `openclaw.ai` always included in Envoy domain whitelist
 
 ## Generated Output
 
@@ -50,10 +57,10 @@ Generates all deployment artifacts. Files: `render.go` and `ca.go`.
 │   │   ├── server-cert.pem     # 0644, self-signed TLS cert
 │   │   └── server-key.pem      # 0600, TLS key
 │   └── openclaw/
-│       ├── Dockerfile           # 0644, node:22-bookworm + iptables + gosu
+│       ├── Dockerfile           # 0644, node:22-bookworm + iptables + gosu + pnpm + bun
 │       └── entrypoint.sh        # 0755, iptables setup + drop to node
 ├── compose.yaml                 # 0644, envoy + gateway + cli
 ├── .env.openclaw                # 0644, runtime env vars + proxy config
-├── setup.sh                     # 0755, token gen, onboarding, compose up
+├── setup.sh                     # 0755, build, onboard, configure, start
 └── manifest.json                # 0644, resolved version metadata
 ```
