@@ -5,6 +5,7 @@
 This repository is a **Pulumi TypeScript IaC** program (`openclaw-deploy`) that provisions and manages OpenClaw fleet deployments on remote VPS hosts with protocol-aware egress security.
 
 Primary goals:
+
 - Provision VPS infrastructure (Hetzner phase 1; DigitalOcean, Oracle planned).
 - Install Docker + Tailscale on bare hosts via remote commands.
 - Deploy OpenClaw gateway containers with transparent egress isolation via Envoy proxy.
@@ -70,27 +71,27 @@ Gateway(s) (1+ OpenClaw instances per server)
   ↓ optional Tailscale Serve/Funnel
 ```
 
-| Component | Type | Provider | Purpose |
-|-----------|------|----------|---------|
-| `Server` | `openclaw:infra:Server` | `@pulumi/hcloud` | Provision VPS, expose IP + connection |
-| `HostBootstrap` | `openclaw:infra:HostBootstrap` | `@pulumi/command` | Install Docker + Tailscale on bare host |
-| `EnvoyEgress` | `openclaw:infra:EnvoyEgress` | `@pulumi/docker` + `@pulumi/command` | Create internal/egress networks, deploy Envoy |
-| `Gateway` | `openclaw:app:Gateway` | `@pulumi/docker` + `@pulumi/command` | Build image, create container, configure gateway, optional Tailscale |
+| Component       | Type                           | Provider                             | Purpose                                                              |
+| --------------- | ------------------------------ | ------------------------------------ | -------------------------------------------------------------------- |
+| `Server`        | `openclaw:infra:Server`        | `@pulumi/hcloud`                     | Provision VPS, expose IP + connection                                |
+| `HostBootstrap` | `openclaw:infra:HostBootstrap` | `@pulumi/command`                    | Install Docker + Tailscale on bare host                              |
+| `EnvoyEgress`   | `openclaw:infra:EnvoyEgress`   | `@pulumi/docker` + `@pulumi/command` | Create internal/egress networks, deploy Envoy                        |
+| `Gateway`       | `openclaw:app:Gateway`         | `@pulumi/docker` + `@pulumi/command` | Build image, create container, configure gateway, optional Tailscale |
 
 ## Stack Configuration
 
 Configuration is managed via `pulumi config` / `Pulumi.<stack>.yaml`:
 
-| Key | Type | Required | Description |
-|-----|------|----------|-------------|
-| `provider` | `"hetzner"` | yes | VPS provider |
-| `serverType` | string | yes | Server type (e.g. `cx22`, `cax21`) |
-| `region` | string | yes | Datacenter region (e.g. `fsn1`) |
-| `sshKeyId` | string | yes | SSH key ID or name at provider |
-| `tailscaleAuthKey` | secret | yes | One-time Tailscale auth key |
-| `egressPolicy` | `EgressRule[]` | yes | User egress rules (additive to hardcoded) |
-| `gateways` | `GatewayConfig[]` | yes | Gateway profile definitions (1+) |
-| `gatewayToken-<profile>` | secret | per-gateway | Auth token for each gateway |
+| Key                      | Type              | Required    | Description                               |
+| ------------------------ | ----------------- | ----------- | ----------------------------------------- |
+| `provider`               | `"hetzner"`       | yes         | VPS provider                              |
+| `serverType`             | string            | yes         | Server type (e.g. `cx22`, `cax21`)        |
+| `region`                 | string            | yes         | Datacenter region (e.g. `fsn1`)           |
+| `sshKeyId`               | string            | yes         | SSH key ID or name at provider            |
+| `tailscaleAuthKey`       | secret            | yes         | One-time Tailscale auth key               |
+| `egressPolicy`           | `EgressRule[]`    | yes         | User egress rules (additive to hardcoded) |
+| `gateways`               | `GatewayConfig[]` | yes         | Gateway profile definitions (1+)          |
+| `gatewayToken-<profile>` | secret            | per-gateway | Auth token for each gateway               |
 
 ## Deployment Model
 
@@ -105,6 +106,7 @@ Configuration is managed via `pulumi config` / `Pulumi.<stack>.yaml`:
 ## Validation Expectations
 
 Before considering work complete, agents should:
+
 - Run `npx tsc --noEmit` to verify type safety.
 - Run `npx vitest run` to verify all tests pass.
 - For component/template changes, verify rendered output is correct.
@@ -157,8 +159,13 @@ that ignores proxy settings, connect on **any port**, or use **any protocol**.
    connects to the real domain, not the attacker's server.
 
 4. **Egress policy engine** — typed rules (`EgressRule`) support domain, IP, and CIDR destinations
-   with protocol-specific handling. SSH and raw TCP rules are reserved for Phase 2 (DNS snooping).
-   MITM TLS inspection for path-level filtering is structured but deferred to Phase 2.
+   with protocol-specific handling. TLS rules use SNI-based passthrough or MITM inspection.
+   SSH and raw TCP rules use per-rule port mapping: each rule gets a dedicated Envoy listener port,
+   and destination-specific iptables DNAT rules in the gateway entrypoint route matching traffic
+   to the correct port. Domain resolution happens at container startup via `getent ahostsv4`.
+   Mapping info flows as the `OPENCLAW_TCP_MAPPINGS` env var (semicolon-delimited `dst:dstPort:envoyPort`).
+   CIDR destinations are not supported for SSH/TCP (emit warning). IPs may change after startup
+   requiring container restart.
 
 5. **Malware-blocking DNS** — Envoy runs a DNS listener (:53 UDP) that forwards all DNS queries to
    Cloudflare's malware-blocking resolvers (1.1.1.2 / 1.0.0.2). These resolvers refuse to resolve
@@ -170,6 +177,7 @@ No `HTTP_PROXY`/`HTTPS_PROXY` env vars are used. The transparent iptables DNAT c
 outbound TCP regardless of what tool, port, or protocol is used.
 
 **Key invariants (do not weaken):**
+
 - Gateway container must use `capabilities.adds: [NET_ADMIN]` (needed by root during init only).
 - Entrypoint must run as root, set iptables (NAT DNAT + FILTER DROP), then `exec gosu node "$@"` — never skip the drop.
 - Entrypoint must restore `DOCKER_OUTPUT` chain jump after flushing nat OUTPUT (Docker DNS depends on it).
@@ -183,19 +191,26 @@ outbound TCP regardless of what tool, port, or protocol is used.
 - Envoy is the only container on both internal and egress networks.
 - All hardcoded domains (infrastructure + AI providers + Homebrew) are always included in the Envoy domain whitelist.
 - Envoy DNS listener must forward to Cloudflare malware-blocking resolvers (1.1.1.2 / 1.0.0.2).
+- SSH/TCP egress rules must each get a dedicated Envoy listener port (sequential from `ENVOY_TCP_PORT_BASE`).
+- SSH/TCP port mappings must be passed to gateway containers via `OPENCLAW_TCP_MAPPINGS` env var.
+- Entrypoint must process `OPENCLAW_TCP_MAPPINGS` to create per-destination iptables DNAT rules before the TLS catch-all.
+- TCP/SSH Envoy clusters must use `STRICT_DNS` for domain destinations (with Cloudflare dns_resolvers) and `STATIC` for IP destinations.
 
 ## Egress Domain Whitelist
 
 All domains below are hardcoded in `config/domains.ts` and always included. They cannot be removed.
 
 **Infrastructure:**
+
 - `clawhub.com`
 - `registry.npmjs.org`
 
 **AI providers:**
+
 - `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.x.ai`
 
 **Homebrew (Linuxbrew):**
+
 - `github.com`, `*.githubusercontent.com`, `ghcr.io`, `formulae.brew.sh`
 
 User-defined `egressPolicy` rules are **additive** to all hardcoded domains. Duplicates are deduplicated by `mergeEgressPolicy()`.
@@ -204,8 +219,6 @@ Domain filtering uses TLS SNI inspection — non-TLS protocols are categorically
 ## Future Steps
 
 - Phase 2: DigitalOcean and Oracle Cloud provider support.
-- Phase 2: MITM TLS inspection for path-level egress filtering.
-- Phase 2: SSH/TCP egress rules via DNS snooping.
 - Add CI validation via pre-commit hooks.
 - Expand Pulumi unit tests with mocked components.
 

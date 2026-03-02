@@ -1,21 +1,22 @@
 // Egress policy types
 
 export interface PathRule {
-  path: string; // glob: "/messages/*", "/api/dm/*"
-  action: "allow" | "deny";
+  path: string; // trailing "*" → Envoy prefix match; otherwise exact match. e.g. "/messages/*", "/health"
+  action: "deny"; // deny matching paths; omit paths to allow them
 }
 
 export interface EgressRule {
-  dst: string; // domain "x.com" | IP "140.82.121.4" | CIDR "10.0.0.0/24"
-  proto: "tls" | "ssh" | "tcp"; // ssh/tcp reserved for future port-based rules
-  port?: number; // required for ssh/ftp/tcp, optional for tls/http (defaults 443/80)
+  dst: string; // domain "x.com" | IPv4 "140.82.121.4" | IPv6 "2001:db8::1" | CIDR "10.0.0.0/24"
+  proto: "tls" | "ssh" | "tcp"; // tls: SNI-based passthrough or MITM inspection; ssh/tcp: per-rule Envoy port mapping
+  port?: number; // required for ssh/tcp, optional for tls (default 443)
   action: "allow" | "deny";
   inspect?: boolean; // MITM TLS termination for path-level rules
   pathRules?: PathRule[]; // when inspect=true
 }
 
-// VPS provider type
-export type VpsProvider = "hetzner" | "digitalocean" | "oracle";
+// VPS provider type (derived from PROVIDERS constant in defaults.ts)
+import { PROVIDERS } from "./defaults";
+export type VpsProvider = (typeof PROVIDERS)[number];
 
 // Tailscale mode per gateway
 export type TailscaleMode = "serve" | "funnel" | "off";
@@ -33,12 +34,24 @@ export interface GatewayConfig {
   env?: Record<string, string>; // additional env vars for container
 }
 
+// Per-rule port mapping for SSH/TCP egress (passed to gateway containers)
+export interface TcpPortMapping {
+  /** Destination domain or IP */
+  dst: string;
+  /** Destination port (e.g. 22 for SSH, 5432 for PostgreSQL) */
+  dstPort: number;
+  /** Protocol from the egress rule */
+  proto: "ssh" | "tcp";
+  /** Dedicated Envoy listener port for this mapping */
+  envoyPort: number;
+}
+
 // Full stack configuration
 export interface StackConfig {
   // VPS
   provider: VpsProvider;
-  serverType: string; // e.g. "cx22" (Hetzner), "s-1vcpu-1gb" (DO)
-  region: string; // e.g. "fsn1", "nyc1"
+  serverType: string; // e.g. "cx22" (Hetzner), "s-1vcpu-1gb" (DO), "VM.Standard.A1.Flex" (OCI)
+  region: string; // e.g. "fsn1" (Hetzner), "nyc1" (DO), availability domain (OCI)
   sshKeyId: string; // provider-specific SSH key ID or fingerprint
 
   // Tailscale

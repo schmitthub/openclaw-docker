@@ -1,23 +1,40 @@
 import * as pulumi from "@pulumi/pulumi";
 import { Server, HostBootstrap, EnvoyEgress, Gateway } from "./components";
 import { EgressRule, GatewayConfig, VpsProvider } from "./config/types";
+import { PROVIDERS } from "./config/defaults";
 
 // --- Pulumi Config ---
 
 const cfg = new pulumi.Config();
 
 // VPS — validate provider at config load time for clear error messages
-const VALID_PROVIDERS: VpsProvider[] = ["hetzner", "digitalocean", "oracle"];
 const providerRaw = cfg.require("provider");
-if (!VALID_PROVIDERS.includes(providerRaw as VpsProvider)) {
+if (!(PROVIDERS as readonly string[]).includes(providerRaw)) {
   throw new Error(
-    `Invalid provider "${providerRaw}". Must be one of: ${VALID_PROVIDERS.join(", ")}`,
+    `Invalid provider "${providerRaw}". Must be one of: ${PROVIDERS.join(", ")}`,
   );
 }
 const provider = providerRaw as VpsProvider;
+
+// OCI-specific config validation (fail early with clear error messages)
+if (provider === "oracle") {
+  if (!cfg.get("compartmentId"))
+    throw new Error(
+      'Oracle provider requires "compartmentId" in stack config.',
+    );
+  if (!cfg.get("subnetId"))
+    throw new Error('Oracle provider requires "subnetId" in stack config.');
+}
+
 const serverType = cfg.require("serverType");
 const region = cfg.require("region");
 const sshKeyId = cfg.require("sshKeyId");
+
+// OCI-specific config (required when provider === "oracle")
+const compartmentId = cfg.get("compartmentId");
+const subnetId = cfg.get("subnetId");
+const ocpus = cfg.getNumber("ocpus");
+const memoryInGbs = cfg.getNumber("memoryInGbs");
 
 // Tailscale
 const tailscaleAuthKey = cfg.requireSecret("tailscaleAuthKey");
@@ -47,6 +64,10 @@ const server = new Server("server", {
   serverType,
   region,
   sshKeyId,
+  ...(compartmentId && { compartmentId }),
+  ...(subnetId && { subnetId }),
+  ...(ocpus !== undefined && { ocpus }),
+  ...(memoryInGbs !== undefined && { memoryInGbs }),
 });
 
 // 2. Install Docker + Tailscale on the host
@@ -73,6 +94,11 @@ const envoy = new EnvoyEgress(
   { dependsOn: [bootstrap] },
 );
 
+// Surface egress policy warnings during pulumi up
+for (const w of envoy.warnings) {
+  pulumi.log.warn(`Egress policy: ${w}`);
+}
+
 // 4. Deploy gateway instances
 const gatewayInstances = gateways.map((gw) => {
   const token = cfg.requireSecret(`gatewayToken-${gw.profile}`);
@@ -92,6 +118,7 @@ const gatewayInstances = gateways.map((gw) => {
       configSet: gw.configSet ?? {},
       env: gw.env,
       auth: { mode: "token", token },
+      tcpPortMappings: envoy.tcpPortMappings,
     },
     { dependsOn: [envoy] },
   );

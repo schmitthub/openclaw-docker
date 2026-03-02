@@ -28,7 +28,9 @@ INTERNAL_SUBNET="\${ENVOY_IP%.*}.0/24"
 # so the kernel rejects connections to external IPs with "Network is unreachable" before
 # iptables can DNAT them. This route makes the routing decision succeed; the NAT table
 # then rewrites the destination to Envoy's egress listener.
-ip route add default via "$ENVOY_IP" 2>/dev/null || true
+ip route add default via "$ENVOY_IP" 2>/dev/null || \
+  ip route show default | grep -q "$ENVOY_IP" || \
+  { echo "ERROR: no default route via $ENVOY_IP — egress will be unreachable" >&2; exit 1; }
 
 # Flush any existing rules (filter + nat tables).
 iptables -F OUTPUT 2>/dev/null || true
@@ -44,7 +46,43 @@ iptables -t nat -A OUTPUT -j DOCKER_OUTPUT 2>/dev/null || true
 iptables -t nat -A OUTPUT -o lo -j RETURN
 # Skip DNAT for internal subnet (container-to-container, Docker service discovery).
 iptables -t nat -A OUTPUT -p tcp -d "$INTERNAL_SUBNET" -j RETURN
-# Redirect all other outbound TCP to Envoy's transparent proxy listener.
+
+# Per-destination DNAT rules for SSH/TCP egress (port-mapped through Envoy).
+# OPENCLAW_TCP_MAPPINGS format: "dst|dstPort|envoyPort;dst|dstPort|envoyPort;..."
+# Each entry gets a dedicated iptables rule routing matching traffic to a specific Envoy listener port.
+if [ -n "\${OPENCLAW_TCP_MAPPINGS:-}" ]; then
+  IFS=';' read -ra TCP_ENTRIES <<< "$OPENCLAW_TCP_MAPPINGS"
+  for entry in "\${TCP_ENTRIES[@]}"; do
+    IFS='|' read -r DST DST_PORT ENVOY_PORT <<< "$entry"
+    if [ -z "$DST" ] || [ -z "$DST_PORT" ] || [ -z "$ENVOY_PORT" ]; then
+      echo "WARN: malformed TCP mapping entry: $entry" >&2
+      continue
+    fi
+    # Check if DST is an IPv4 address
+    if echo "$DST" | grep -qE '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$'; then
+      RESOLVED_IP="$DST"
+    elif echo "$DST" | grep -q ':'; then
+      # IPv6 literal — Envoy cluster handles it, but iptables can't route IPv6 on this network
+      echo "WARN: IPv6 destination $DST — Envoy can reach it, but gateway iptables routing is IPv4-only" >&2
+      continue
+    else
+      # Domain — resolve to IPv4 for iptables matching
+      RESOLVE_ERR="$(getent ahostsv4 "$DST" 2>&1 1>/dev/null)" || true
+      RESOLVED_IP="$(getent ahostsv4 "$DST" 2>/dev/null | head -1 | awk '{print $1}')"
+      if [ -z "$RESOLVED_IP" ] || ! echo "$RESOLVED_IP" | grep -qE '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$'; then
+        echo "WARN: cannot resolve '$DST' for TCP mapping\${RESOLVE_ERR:+ ($RESOLVE_ERR)} — skipping" >&2
+        continue
+      fi
+    fi
+    if ! iptables -t nat -A OUTPUT -p tcp -d "$RESOLVED_IP" --dport "$DST_PORT" \
+         -j DNAT --to-destination "$ENVOY_IP":"$ENVOY_PORT" 2>&1; then
+      echo "ERROR: iptables DNAT failed for $DST:$DST_PORT -> envoy:$ENVOY_PORT (resolved=$RESOLVED_IP)" >&2
+      exit 1
+    fi
+  done
+fi
+
+# Redirect all other outbound TCP to Envoy's transparent proxy listener (TLS catch-all).
 iptables -t nat -A OUTPUT -p tcp -j DNAT --to-destination "$ENVOY_IP":${ENVOY_EGRESS_PORT}
 
 # === FILTER table: defense in depth ===

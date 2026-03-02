@@ -1,13 +1,25 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as hcloud from "@pulumi/hcloud";
+import * as digitalocean from "@pulumi/digitalocean";
+import * as oci from "@pulumi/oci";
 import { VpsProvider } from "../config";
+import {
+  OCI_ARM_SHAPE_PREFIX,
+  OCI_DEFAULT_OCPUS,
+  OCI_DEFAULT_MEMORY_GBS,
+} from "../config/defaults";
 
 export interface ServerArgs {
   provider: VpsProvider;
-  serverType: pulumi.Input<string>; // e.g. "cx22", "cx32", "cax21"
-  region: pulumi.Input<string>; // e.g. "fsn1", "nbg1"
-  sshKeyId: pulumi.Input<string>; // Hetzner SSH key ID or name
-  image?: pulumi.Input<string>; // defaults to "ubuntu-24.04"
+  serverType: pulumi.Input<string>; // e.g. "cx22" (Hetzner), "s-1vcpu-1gb" (DO), "VM.Standard.A1.Flex" (OCI)
+  region: pulumi.Input<string>; // e.g. "fsn1" (Hetzner), "nyc1" (DO), availability domain for OCI
+  sshKeyId: pulumi.Input<string>; // Key ID (Hetzner), fingerprint (DO), or SSH public key content (OCI)
+  image?: pulumi.Input<string>; // e.g. "ubuntu-24.04" (Hetzner), "ubuntu-24-04-x64" (DO), image OCID (OCI)
+  // OCI-specific (required when provider === "oracle")
+  compartmentId?: pulumi.Input<string>; // OCI compartment OCID
+  subnetId?: pulumi.Input<string>; // OCI subnet OCID (must allow public IP assignment)
+  ocpus?: pulumi.Input<number>; // OCI flex shape: CPU count (default: 2)
+  memoryInGbs?: pulumi.Input<number>; // OCI flex shape: memory in GB (default: 12)
 }
 
 export class Server extends pulumi.ComponentResource {
@@ -49,24 +61,143 @@ export class Server extends pulumi.ComponentResource {
           user: "root",
         }));
 
-        this.dockerHost = server.ipv4Address.apply(
-          (ip) => `ssh://root@${ip}`,
-        );
+        this.dockerHost = server.ipv4Address.apply((ip) => `ssh://root@${ip}`);
 
         break;
       }
 
-      case "digitalocean":
-        // Phase 2: DigitalOcean support
-        throw new Error(
-          `Provider "digitalocean" is not yet supported. Only "hetzner" is available.`,
+      case "digitalocean": {
+        const droplet = new digitalocean.Droplet(
+          `${name}-droplet`,
+          {
+            name,
+            size: args.serverType, // e.g. "s-1vcpu-1gb", "s-2vcpu-2gb"
+            region: args.region, // e.g. "nyc1", "sfo3"
+            image: args.image ?? "ubuntu-24-04-x64",
+            sshKeys: [args.sshKeyId],
+          },
+          { parent: this },
         );
 
-      case "oracle":
-        // Phase 2: Oracle Cloud support
-        throw new Error(
-          `Provider "oracle" is not yet supported. Only "hetzner" is available.`,
+        this.ipAddress = droplet.ipv4Address;
+
+        // DO arm64 droplet slugs end in "-arm" (e.g. "s-2vcpu-4gb-arm")
+        this.arch = pulumi
+          .output(args.serverType)
+          .apply((st) => (st.endsWith("-arm") ? "arm64" : "amd64"));
+
+        this.connection = droplet.ipv4Address.apply((ip) => ({
+          host: ip,
+          user: "root",
+        }));
+
+        this.dockerHost = droplet.ipv4Address.apply((ip) => `ssh://root@${ip}`);
+
+        break;
+      }
+
+      case "oracle": {
+        if (!args.compartmentId) {
+          throw new Error(
+            'Oracle provider requires "compartmentId" in ServerArgs.',
+          );
+        }
+        if (!args.subnetId) {
+          throw new Error('Oracle provider requires "subnetId" in ServerArgs.');
+        }
+        if (!args.image) {
+          throw new Error(
+            'Oracle provider requires "image" (Ubuntu image OCID) in ServerArgs.',
+          );
+        }
+
+        // OCI Ubuntu images default to "ubuntu" user with root login disabled.
+        // Cloud-init enables root SSH to match the Hetzner/DO pattern expected
+        // by bootstrap, envoy, and gateway components.
+        const cloudInit = [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          "mkdir -p /root/.ssh && chmod 700 /root/.ssh",
+          "if [ ! -f /home/ubuntu/.ssh/authorized_keys ]; then",
+          '  echo "ERROR: /home/ubuntu/.ssh/authorized_keys not found" >&2; exit 1',
+          "fi",
+          "cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys",
+          "chmod 600 /root/.ssh/authorized_keys",
+          "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config",
+          "sshd -t || { echo 'ERROR: sshd config test failed' >&2; exit 1; }",
+          "systemctl restart sshd",
+        ].join("\n");
+
+        const instance = new oci.core.Instance(
+          `${name}-instance`,
+          {
+            compartmentId: args.compartmentId,
+            availabilityDomain: args.region,
+            shape: args.serverType,
+            shapeConfig: {
+              ocpus: args.ocpus ?? OCI_DEFAULT_OCPUS,
+              memoryInGbs: args.memoryInGbs ?? OCI_DEFAULT_MEMORY_GBS,
+            },
+            sourceDetails: {
+              sourceType: "image",
+              sourceId: args.image,
+            },
+            createVnicDetails: {
+              subnetId: args.subnetId,
+              assignPublicIp: "true",
+            },
+            metadata: {
+              ssh_authorized_keys: args.sshKeyId,
+              user_data: Buffer.from(cloudInit).toString("base64"),
+            },
+            displayName: name,
+          },
+          { parent: this },
         );
+
+        // OCI doesn't expose public IP on the Instance directly —
+        // resolve via primary VNIC attachment → VNIC → publicIpAddress.
+        const publicIp = oci.core
+          .getVnicAttachmentsOutput({
+            instanceId: instance.id,
+            compartmentId: args.compartmentId,
+          })
+          .apply((att) => {
+            if (att.vnicAttachments.length === 0) {
+              throw new Error("No VNIC attachments found for OCI instance.");
+            }
+            return oci.core.getVnic({
+              vnicId: att.vnicAttachments[0].vnicId,
+            });
+          })
+          .apply((vnic) => {
+            if (!vnic.publicIpAddress) {
+              throw new Error(
+                "OCI instance VNIC has no public IP address. Ensure the subnet allows " +
+                  "public IP assignment and the VNIC is configured with assignPublicIp: true.",
+              );
+            }
+            return vnic.publicIpAddress;
+          });
+
+        this.ipAddress = publicIp;
+
+        // ARM detection: A1 shapes are ARM (Ampere), others are x86
+        this.arch = pulumi
+          .output(args.serverType)
+          .apply((st) =>
+            st.startsWith(OCI_ARM_SHAPE_PREFIX) ? "arm64" : "amd64",
+          );
+
+        this.connection = publicIp.apply((ip) => ({
+          host: ip,
+          user: "root",
+        }));
+
+        this.dockerHost = publicIp.apply((ip) => `ssh://root@${ip}`);
+
+        break;
+      }
 
       default: {
         const _exhaustive: never = args.provider;
