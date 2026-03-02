@@ -14,7 +14,7 @@
 | Task 3: Template engine — Dockerfile & entrypoint | `complete` | Task 3 agent |
 | Task 4: Template engine — Envoy egress config | `complete` | Task 4 agent |
 | Task 5: Server component (Hetzner VPS provisioning) | `complete` | Task 5 agent |
-| Task 6: HostBootstrap component (Docker + Tailscale) | `pending` | — |
+| Task 6: HostBootstrap component (Docker + Tailscale) | `complete` | Task 6 agent |
 | Task 7: EnvoyEgress component (egress proxy per server) | `pending` | — |
 | Task 8: Gateway component (OpenClaw instance) | `pending` | — |
 | Task 9: Stack composition & example config | `pending` | — |
@@ -30,6 +30,7 @@
 - **Task 3:** Ported Dockerfile and entrypoint.sh renderers from Go `fmt.Sprintf` to TypeScript pure functions. Added `uv` (Python/astral.sh) install step and `/home/node/.local/bin` to PATH (new vs old Go code). Changed `DockerfileOpts.packages` to `string[]` instead of the old single-string `DockerAptPackages` — packages are merged with `CORE_APT_PACKAGES` at render time. Entrypoint uses `ENVOY_EGRESS_PORT` constant from config/defaults instead of hardcoding `10000`. The `renderBrowserBlock` helper conditionally emits the Playwright block rather than using the old ARG-based conditional. 47 template tests cover all security-critical invariants.
 - **Task 5:** Created `components/server.ts` — Pulumi `ComponentResource` wrapping `hcloud.Server`. `ServerArgs.provider` is typed as plain `VpsProvider` (not `Input<VpsProvider>`) to enable compile-time exhaustive switch checking. Arch mapping: `cax*` → arm64, everything else → amd64. Uses `location` (not deprecated `datacenter`). Removed `components/.gitkeep` since real files exist now. `node_modules` needed `--ignore-scripts` install in sandbox (esbuild EACCES). Vitest has rollup native module issue in sandbox but `tsc --noEmit` passes cleanly.
 - **Task 4:** Ported Envoy config renderer as egress-only (removed ingress listener, openclaw_gateway cluster, TLS cert references). Returns `{ yaml: string, warnings: string[] }` to surface Phase 2 gaps. TLS inspect rules emit passthrough + warning. SSH/TCP rules are skipped with warnings. All TLS allow domains go into one filter chain with combined `server_names` (same as old Go code). Uses `mergeEgressPolicy()` for hardcoded domain prepending + dedup. 34 tests cover all security invariants. Serena language server still fails due to Go not installed — used Claude's standard Read/Edit tools throughout.
+- **Task 6:** Created `components/bootstrap.ts` — Pulumi `ComponentResource` with three chained `command.remote.Command` resources (Docker install, Tailscale install, Tailscale auth). `connection` arg typed as `command.types.input.remote.ConnectionArgs` (not inline `{ host; user }`) so callers can pass `privateKey`, `agentSocketPath`, etc. Tailscale auth command uses `logging: "none"` + `additionalSecretOutputs: ["stdout", "stderr"]` to prevent auth key leakage in Pulumi logs. `tailscaleIP` extracts last line of stdout (since `tailscale up` may emit status messages before `tailscale ip -4`). Docker/Tailscale installs serialized to avoid apt/dpkg lock contention. `dockerHost` uses Tailscale IP (private, encrypted) not public IP.
 
 ---
 
