@@ -113,7 +113,7 @@ export class EnvoyEgress extends pulumi.ComponentResource {
         connection: args.connection,
         create: [
           `mkdir -p ${ENVOY_CONFIG_HOST_DIR}`,
-          `[ -f ${ENVOY_CA_CERT_PATH} ] || (openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 3650 -nodes -subj "/CN=OpenClaw Egress CA" -keyout ${ENVOY_CA_KEY_PATH} -out ${ENVOY_CA_CERT_PATH} && chmod 644 ${ENVOY_CA_CERT_PATH} && chmod 640 ${ENVOY_CA_KEY_PATH})`,
+          `[ -f ${ENVOY_CA_CERT_PATH} -a -f ${ENVOY_CA_KEY_PATH} ] || (openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 3650 -nodes -subj "/CN=OpenClaw Egress CA" -keyout ${ENVOY_CA_KEY_PATH} -out ${ENVOY_CA_CERT_PATH} && chmod 644 ${ENVOY_CA_CERT_PATH} && chmod 640 ${ENVOY_CA_KEY_PATH})`,
         ].join(" && "),
         delete: `rm -f ${ENVOY_CA_CERT_PATH} ${ENVOY_CA_KEY_PATH}`,
       },
