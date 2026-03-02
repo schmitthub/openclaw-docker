@@ -393,9 +393,9 @@ describe("renderEntrypoint", () => {
     // All ${...} in the output should be valid bash variable references
     const templateExpressions = ep.match(/\$\{[^}]+\}/g) ?? [];
     for (const expr of templateExpressions) {
-      // Bash variable patterns: ${VAR}, ${VAR%.*}, ${VAR:-default}, ${VAR[@]}
+      // Bash variable patterns: ${VAR}, ${VAR%.*}, ${VAR:-default}, ${VAR:+alt}, ${VAR[@]}
       expect(expr).toMatch(
-        /^\$\{[A-Z_][A-Z0-9_]*(%\.\*|:-[^}]*|#[^}]*|##[^}]*|\[@\])?\}$/,
+        /^\$\{[A-Z_][A-Z0-9_]*(%\.\*|:-[^}]*|:\+[^}]*|#[^}]*|##[^}]*|\[@\])?\}$/,
       );
     }
   });

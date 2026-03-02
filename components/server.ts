@@ -107,7 +107,7 @@ export class Server extends pulumi.ComponentResource {
         }
         if (!args.image) {
           throw new Error(
-            'Oracle provider requires "image" (Ubuntu 24.04 aarch64 OCID) in ServerArgs.',
+            'Oracle provider requires "image" (Ubuntu image OCID) in ServerArgs.',
           );
         }
 
@@ -116,10 +116,15 @@ export class Server extends pulumi.ComponentResource {
         // by bootstrap, envoy, and gateway components.
         const cloudInit = [
           "#!/bin/bash",
+          "set -euo pipefail",
           "mkdir -p /root/.ssh && chmod 700 /root/.ssh",
+          "if [ ! -f /home/ubuntu/.ssh/authorized_keys ]; then",
+          '  echo "ERROR: /home/ubuntu/.ssh/authorized_keys not found" >&2; exit 1',
+          "fi",
           "cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys",
           "chmod 600 /root/.ssh/authorized_keys",
           "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config",
+          "sshd -t || { echo 'ERROR: sshd config test failed' >&2; exit 1; }",
           "systemctl restart sshd",
         ].join("\n");
 
@@ -165,7 +170,15 @@ export class Server extends pulumi.ComponentResource {
               vnicId: att.vnicAttachments[0].vnicId,
             });
           })
-          .apply((vnic) => vnic.publicIpAddress);
+          .apply((vnic) => {
+            if (!vnic.publicIpAddress) {
+              throw new Error(
+                "OCI instance VNIC has no public IP address. Ensure the subnet allows " +
+                  "public IP assignment and the VNIC is configured with assignPublicIp: true.",
+              );
+            }
+            return vnic.publicIpAddress;
+          });
 
         this.ipAddress = publicIp;
 

@@ -826,4 +826,120 @@ describe("renderEnvoyConfig", () => {
       expect(yaml).toContain("inspect:true use MITM TLS termination");
     });
   });
+
+  describe("domain validation", () => {
+    it("skips domains with YAML-special characters and emits warning", () => {
+      const rules: EgressRule[] = [
+        { dst: '"; rm -rf /', proto: "tls", action: "allow" },
+      ];
+      const { yaml, warnings } = renderEnvoyConfig(rules);
+      expect(warnings.length).toBeGreaterThanOrEqual(1);
+      expect(warnings.some((w) => w.includes("Invalid destination"))).toBe(
+        true,
+      );
+      expect(yaml).not.toContain("rm -rf");
+    });
+
+    it("skips domains with spaces", () => {
+      const rules: EgressRule[] = [
+        { dst: "evil domain.com", proto: "tls", action: "allow" },
+      ];
+      const { warnings } = renderEnvoyConfig(rules);
+      expect(warnings.some((w) => w.includes("Invalid destination"))).toBe(
+        true,
+      );
+    });
+
+    it("skips domains with leading hyphens", () => {
+      const rules: EgressRule[] = [
+        { dst: "-evil.com", proto: "tls", action: "allow" },
+      ];
+      const { warnings } = renderEnvoyConfig(rules);
+      expect(warnings.some((w) => w.includes("Invalid destination"))).toBe(
+        true,
+      );
+    });
+
+    it("skips invalid SSH/TCP destinations with warning", () => {
+      const rules: EgressRule[] = [
+        { dst: '"; drop table', proto: "ssh", port: 22, action: "allow" },
+      ];
+      const { warnings, tcpPortMappings } = renderEnvoyConfig(rules);
+      expect(warnings.some((w) => w.includes("Invalid destination"))).toBe(
+        true,
+      );
+      expect(tcpPortMappings).toHaveLength(0);
+    });
+
+    it("accepts valid domains through validation", () => {
+      const rules: EgressRule[] = [
+        { dst: "valid-domain.example.com", proto: "tls", action: "allow" },
+      ];
+      const { warnings } = renderEnvoyConfig(rules);
+      expect(warnings.some((w) => w.includes("Invalid destination"))).toBe(
+        false,
+      );
+    });
+
+    it("accepts wildcard domains through validation", () => {
+      const rules: EgressRule[] = [
+        { dst: "*.example.com", proto: "tls", action: "allow" },
+      ];
+      const { warnings } = renderEnvoyConfig(rules);
+      expect(warnings.some((w) => w.includes("Invalid destination"))).toBe(
+        false,
+      );
+    });
+
+    it("accepts IPv4 addresses through validation", () => {
+      const rules: EgressRule[] = [
+        { dst: "10.0.0.1", proto: "tls", action: "allow" },
+      ];
+      const { warnings } = renderEnvoyConfig(rules);
+      expect(warnings.some((w) => w.includes("Invalid destination"))).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("path validation", () => {
+    it("throws for path without leading /", () => {
+      const rules: EgressRule[] = [
+        {
+          dst: "example.com",
+          proto: "tls",
+          action: "allow",
+          inspect: true,
+          pathRules: [{ path: "no-leading-slash", action: "deny" }],
+        },
+      ];
+      expect(() => renderEnvoyConfig(rules)).toThrow("must start with /");
+    });
+
+    it("throws for path containing double quotes", () => {
+      const rules: EgressRule[] = [
+        {
+          dst: "example.com",
+          proto: "tls",
+          action: "allow",
+          inspect: true,
+          pathRules: [{ path: '/api/"inject', action: "deny" }],
+        },
+      ];
+      expect(() => renderEnvoyConfig(rules)).toThrow("forbidden characters");
+    });
+
+    it("throws for path containing newlines", () => {
+      const rules: EgressRule[] = [
+        {
+          dst: "example.com",
+          proto: "tls",
+          action: "allow",
+          inspect: true,
+          pathRules: [{ path: "/api/\ninject", action: "deny" }],
+        },
+      ];
+      expect(() => renderEnvoyConfig(rules)).toThrow("forbidden characters");
+    });
+  });
 });

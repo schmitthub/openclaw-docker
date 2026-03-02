@@ -312,6 +312,68 @@ describe("HostBootstrap component", () => {
   });
 });
 
+describe("EnvoyEgress component MITM validation", () => {
+  it("skips MITM domain with shell-injection characters via warning", async () => {
+    const { EnvoyEgress } = await import("../components/envoy");
+    const envoy = new EnvoyEgress("test-envoy-bad-mitm", {
+      dockerHost: "ssh://root@100.64.0.1",
+      connection: { host: "100.64.0.1", user: "root" },
+      egressPolicy: [
+        {
+          dst: '"; rm -rf /',
+          proto: "tls",
+          action: "allow",
+          inspect: true,
+        },
+      ],
+    });
+    expect(envoy.warnings.some((w) => w.includes("Invalid destination"))).toBe(
+      true,
+    );
+    expect(envoy.inspectedDomains).toHaveLength(0);
+  });
+
+  it("skips MITM domain with leading hyphen via warning", async () => {
+    const { EnvoyEgress } = await import("../components/envoy");
+    const envoy = new EnvoyEgress("test-envoy-bad-mitm-hyphen", {
+      dockerHost: "ssh://root@100.64.0.1",
+      connection: { host: "100.64.0.1", user: "root" },
+      egressPolicy: [
+        {
+          dst: "-evil.com",
+          proto: "tls",
+          action: "allow",
+          inspect: true,
+        },
+      ],
+    });
+    expect(envoy.warnings.some((w) => w.includes("Invalid destination"))).toBe(
+      true,
+    );
+    expect(envoy.inspectedDomains).toHaveLength(0);
+  });
+
+  it("skips MITM domain with spaces via warning", async () => {
+    const { EnvoyEgress } = await import("../components/envoy");
+    const envoy = new EnvoyEgress("test-envoy-bad-mitm-space", {
+      dockerHost: "ssh://root@100.64.0.1",
+      connection: { host: "100.64.0.1", user: "root" },
+      egressPolicy: [
+        {
+          dst: "evil domain.com",
+          proto: "tls",
+          action: "allow",
+          inspect: true,
+        },
+      ],
+    });
+    expect(envoy.warnings.some((w) => w.includes("Invalid destination"))).toBe(
+      true,
+    );
+    expect(envoy.inspectedDomains).toHaveLength(0);
+  });
+});
+
 describe("EnvoyEgress component", () => {
   it("creates networks and container with correct outputs", async () => {
     const { EnvoyEgress } = await import("../components/envoy");
@@ -480,5 +542,33 @@ describe("Gateway component", () => {
     });
 
     expect(gw).toBeDefined();
+  });
+
+  it("constructs with tcpPortMappings without errors", async () => {
+    const { Gateway } = await import("../components/gateway");
+    const gw = new Gateway("test-gw-tcp", {
+      dockerHost: "ssh://root@100.64.0.1",
+      connection: { host: "100.64.0.1", user: "root" },
+      internalNetworkName: "openclaw-internal",
+      profile: "tcptest",
+      version: "latest",
+      packages: [],
+      port: 18789,
+      tailscale: "off",
+      configSet: {},
+      auth: { mode: "token", token: "test-token" },
+      tcpPortMappings: [
+        { dst: "github.com", dstPort: 22, proto: "ssh", envoyPort: 10001 },
+        {
+          dst: "db.example.com",
+          dstPort: 5432,
+          proto: "tcp",
+          envoyPort: 10002,
+        },
+      ],
+    });
+
+    const containerId = await promiseOf(gw.containerId);
+    expect(containerId).toBeDefined();
   });
 });

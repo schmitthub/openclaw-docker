@@ -28,7 +28,9 @@ INTERNAL_SUBNET="\${ENVOY_IP%.*}.0/24"
 # so the kernel rejects connections to external IPs with "Network is unreachable" before
 # iptables can DNAT them. This route makes the routing decision succeed; the NAT table
 # then rewrites the destination to Envoy's egress listener.
-ip route add default via "$ENVOY_IP" 2>/dev/null || true
+ip route add default via "$ENVOY_IP" 2>/dev/null || \
+  ip route show default | grep -q "$ENVOY_IP" || \
+  { echo "ERROR: no default route via $ENVOY_IP — egress will be unreachable" >&2; exit 1; }
 
 # Flush any existing rules (filter + nat tables).
 iptables -F OUTPUT 2>/dev/null || true
@@ -65,13 +67,18 @@ if [ -n "\${OPENCLAW_TCP_MAPPINGS:-}" ]; then
       continue
     else
       # Domain — resolve to IPv4 for iptables matching
+      RESOLVE_ERR="$(getent ahostsv4 "$DST" 2>&1 1>/dev/null)" || true
       RESOLVED_IP="$(getent ahostsv4 "$DST" 2>/dev/null | head -1 | awk '{print $1}')"
-      if [ -z "$RESOLVED_IP" ]; then
-        echo "WARN: cannot resolve '$DST' for TCP mapping — skipping" >&2
+      if [ -z "$RESOLVED_IP" ] || ! echo "$RESOLVED_IP" | grep -qE '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$'; then
+        echo "WARN: cannot resolve '$DST' for TCP mapping\${RESOLVE_ERR:+ ($RESOLVE_ERR)} — skipping" >&2
         continue
       fi
     fi
-    iptables -t nat -A OUTPUT -p tcp -d "$RESOLVED_IP" --dport "$DST_PORT" -j DNAT --to-destination "$ENVOY_IP":"$ENVOY_PORT"
+    if ! iptables -t nat -A OUTPUT -p tcp -d "$RESOLVED_IP" --dport "$DST_PORT" \
+         -j DNAT --to-destination "$ENVOY_IP":"$ENVOY_PORT" 2>&1; then
+      echo "ERROR: iptables DNAT failed for $DST:$DST_PORT -> envoy:$ENVOY_PORT (resolved=$RESOLVED_IP)" >&2
+      exit 1
+    fi
   done
 fi
 

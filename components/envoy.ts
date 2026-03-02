@@ -32,7 +32,7 @@ export class EnvoyEgress extends pulumi.ComponentResource {
   public readonly internalNetworkId: pulumi.Output<string>;
   /** Internal network name */
   public readonly internalNetworkName: pulumi.Output<string>;
-  /** Egress network ID (Envoy + CLI containers attach here) */
+  /** Egress network ID (Envoy attaches here for internet access) */
   public readonly egressNetworkId: pulumi.Output<string>;
   /** Egress network name */
   public readonly egressNetworkName: pulumi.Output<string>;
@@ -105,15 +105,15 @@ export class EnvoyEgress extends pulumi.ComponentResource {
     );
 
     // Step 4: Generate CA certificate for MITM TLS inspection (idempotent).
-    // Only generates if cert doesn't already exist. Used by Task 5 for TLS
-    // termination and by gateway containers via NODE_EXTRA_CA_CERTS.
+    // Only generates if cert doesn't already exist. Used to sign per-domain
+    // certs (Step 4b) and trusted by gateway containers via NODE_EXTRA_CA_CERTS.
     const generateCA = new command.remote.Command(
       `${name}-generate-ca`,
       {
         connection: args.connection,
         create: [
           `mkdir -p ${ENVOY_CONFIG_HOST_DIR}`,
-          `[ -f ${ENVOY_CA_CERT_PATH} -a -f ${ENVOY_CA_KEY_PATH} ] || (openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 3650 -nodes -subj "/CN=OpenClaw Egress CA" -keyout ${ENVOY_CA_KEY_PATH} -out ${ENVOY_CA_CERT_PATH} && chmod 644 ${ENVOY_CA_CERT_PATH} && chmod 640 ${ENVOY_CA_KEY_PATH})`,
+          `[ -f ${ENVOY_CA_CERT_PATH} -a -f ${ENVOY_CA_KEY_PATH} ] || (openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 3650 -nodes -subj "/CN=OpenClaw Egress CA" -keyout ${ENVOY_CA_KEY_PATH} -out ${ENVOY_CA_CERT_PATH} && chmod 644 ${ENVOY_CA_CERT_PATH} && chmod 600 ${ENVOY_CA_KEY_PATH})`,
         ].join(" && "),
         delete: `rm -f ${ENVOY_CA_CERT_PATH} ${ENVOY_CA_KEY_PATH}`,
       },
@@ -142,14 +142,14 @@ export class EnvoyEgress extends pulumi.ComponentResource {
             `mkdir -p ${ENVOY_MITM_CERTS_HOST_DIR}`,
             `[ -f "${certPath}" ] || (` +
               `openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes` +
-              ` -subj "/CN=${domain}" -keyout "${keyPath}" -out "/tmp/${domain}.csr" 2>/dev/null` +
+              ` -subj "/CN=${domain}" -keyout "${keyPath}" -out "/tmp/${domain}.csr"` +
               ` && printf "subjectAltName=DNS:${domain}" > "/tmp/${domain}.ext"` +
               ` && openssl x509 -req -in "/tmp/${domain}.csr"` +
               ` -CA ${ENVOY_CA_CERT_PATH} -CAkey ${ENVOY_CA_KEY_PATH}` +
               ` -CAcreateserial -days 365 -extfile "/tmp/${domain}.ext"` +
-              ` -out "${certPath}" 2>/dev/null` +
+              ` -out "${certPath}"` +
               ` && rm -f "/tmp/${domain}.csr" "/tmp/${domain}.ext"` +
-              ` && chmod 644 "${certPath}" && chmod 640 "${keyPath}"` +
+              ` && chmod 644 "${certPath}" && chmod 600 "${keyPath}"` +
               `)`,
           ].join(" && "),
           delete: `rm -f ${certPath} ${keyPath}`,

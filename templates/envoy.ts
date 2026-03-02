@@ -1,4 +1,4 @@
-import { EgressRule, PathRule } from "../config/types";
+import { EgressRule, PathRule, TcpPortMapping } from "../config/types";
 import { mergeEgressPolicy } from "../config/domains";
 import {
   ENVOY_EGRESS_PORT,
@@ -9,17 +9,6 @@ import {
   ENVOY_MITM_CERTS_CONTAINER_DIR,
   ENVOY_MITM_CLUSTER_NAME,
 } from "../config/defaults";
-
-export interface TcpPortMapping {
-  /** Destination domain or IP */
-  dst: string;
-  /** Destination port (e.g. 22 for SSH, 5432 for PostgreSQL) */
-  dstPort: number;
-  /** Protocol from the egress rule */
-  proto: "ssh" | "tcp";
-  /** Dedicated Envoy listener port for this mapping */
-  envoyPort: number;
-}
 
 export interface EnvoyConfigResult {
   yaml: string;
@@ -35,8 +24,16 @@ interface MitmDomainConfig {
   pathRules: PathRule[];
 }
 
-/** Convert a PathRule path to an Envoy route match line (prefix or exact). */
+/** Validate and convert a PathRule path to an Envoy route match line (prefix or exact). */
 function renderRouteMatch(path: string): string {
+  if (!path.startsWith("/")) {
+    throw new Error(`Invalid pathRule path "${path}": must start with /`);
+  }
+  if (/["\n\r]/.test(path)) {
+    throw new Error(
+      `Invalid pathRule path "${path}": contains forbidden characters`,
+    );
+  }
   if (path.endsWith("*")) {
     return `prefix: "${path.slice(0, -1)}"`;
   }
@@ -114,8 +111,8 @@ ${routeEntries}
 }
 
 /** Render the MITM forward cluster for TLS origination to upstream.
- * The dynamic_forward_proxy cluster derives upstream SNI from the resolved
- * hostname automatically — no explicit auto_sni config needed. */
+ * The dynamic_forward_proxy cluster derives upstream SNI from the HTTP
+ * Host/:authority header automatically — no explicit auto_sni config needed. */
 function renderMitmCluster(): string {
   return `
   - name: ${ENVOY_MITM_CLUSTER_NAME}
@@ -216,6 +213,10 @@ function renderTcpCluster(mapping: TcpPortMapping): string {
  * TLS rules with inspect:true use MITM termination for path-level filtering.
  * All other TLS rules use SNI-based passthrough (no TLS termination).
  */
+const DOMAIN_RE =
+  /^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+const IP_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
+
 export function renderEnvoyConfig(
   userRules: EgressRule[] = [],
 ): EnvoyConfigResult {
@@ -234,6 +235,11 @@ export function renderEnvoyConfig(
 
     switch (rule.proto) {
       case "tls":
+        // Validate domain before interpolating into YAML (CIDRs not valid for TLS)
+        if (!DOMAIN_RE.test(rule.dst) && !IP_RE.test(rule.dst)) {
+          warnings.push(`Invalid destination "${rule.dst}" — skipped`);
+          break;
+        }
         if (rule.inspect) {
           if (rule.dst.includes("*")) {
             warnings.push(
@@ -254,6 +260,16 @@ export function renderEnvoyConfig(
 
       case "ssh":
       case "tcp": {
+        // Validate destination before interpolating into YAML
+        if (
+          !DOMAIN_RE.test(rule.dst) &&
+          !IP_RE.test(rule.dst) &&
+          !rule.dst.includes("/") &&
+          !rule.dst.includes(":")
+        ) {
+          warnings.push(`Invalid destination "${rule.dst}" — skipped`);
+          break;
+        }
         if (rule.dst.includes("/")) {
           warnings.push(
             `CIDR destination "${rule.dst}" not supported for ${rule.proto.toUpperCase()} egress — use a specific IP or domain`,
@@ -301,7 +317,7 @@ export function renderEnvoyConfig(
 # Ingress is handled by Tailscale (no ingress listener here).
 # Egress uses TLS Inspector + SNI-based domain whitelist.${hasMitm ? "\n# Domains with inspect:true use MITM TLS termination for path-level filtering." : " No MITM / TLS termination."}
 # All outbound TCP from the gateway is DNAT'd here by iptables in entrypoint.sh.
-# Restart after editing: docker compose restart envoy
+# Restart after editing: docker restart envoy
 
 static_resources:
   listeners:

@@ -40,7 +40,7 @@ export interface GatewayArgs {
   /** Additional env vars for the container */
   env?: Record<string, string>;
   /** Auth configuration for this gateway */
-  auth: { mode: string; token: pulumi.Input<string> };
+  auth: { mode: "token"; token: pulumi.Input<string> };
   /** Per-rule port mappings for SSH/TCP egress (from EnvoyEgress) */
   tcpPortMappings?: TcpPortMapping[];
 }
@@ -139,6 +139,7 @@ export class Gateway extends pulumi.ComponentResource {
         envs: [
           `HOME=/home/node`,
           `TERM=xterm-256color`,
+          // Always set so the gateway trusts MITM-issued certs (harmless when no inspect rules exist)
           `NODE_EXTRA_CA_CERTS=${ENVOY_CA_CERT_PATH}`,
           ...(args.tcpPortMappings && args.tcpPortMappings.length > 0
             ? [

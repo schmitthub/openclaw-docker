@@ -39,6 +39,9 @@ export const CORE_APT_PACKAGES = [
 // Tailscale Funnel allowed ports
 export const TAILSCALE_FUNNEL_PORTS = [443, 8443, 10000];
 
+// Supported VPS providers
+export const PROVIDERS = ["hetzner", "digitalocean", "oracle"] as const;
+
 // Oracle Cloud (OCI) defaults
 export const OCI_ARM_SHAPE_PREFIX = "VM.Standard.A1";
 export const OCI_DEFAULT_OCPUS = 2;
