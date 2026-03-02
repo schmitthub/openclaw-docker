@@ -12,7 +12,7 @@
 | Task 1: Gut repo & scaffold Pulumi TypeScript project | `complete` | Task 1 agent |
 | Task 2: Type system, config schema & domain registry | `complete` | Task 2 agent |
 | Task 3: Template engine — Dockerfile & entrypoint | `complete` | Task 3 agent |
-| Task 4: Template engine — Envoy egress config | `pending` | — |
+| Task 4: Template engine — Envoy egress config | `complete` | Task 4 agent |
 | Task 5: Server component (Hetzner VPS provisioning) | `pending` | — |
 | Task 6: HostBootstrap component (Docker + Tailscale) | `pending` | — |
 | Task 7: EnvoyEgress component (egress proxy per server) | `pending` | — |
@@ -28,6 +28,7 @@
 - **Task 1:** Serena's Go language server will fail after deleting Go code. The `.serena/project.yml` was updated to remove `go` from languages. Future agents should only see `bash` and `typescript`.
 - **Task 2:** PYTHON_DOMAINS were in the initiative plan but not in AGENTS.md — removed to avoid unauthorized egress surface expansion. Removed `http` and `ftp` from `EgressRule.proto` union since they contradict the SNI-only egress model. Added `vitest.config.ts` to exclude `dist/` from test discovery. Used tuple type `[GatewayConfig, ...GatewayConfig[]]` for non-empty gateways enforcement. Serena's `edit_memory` tool fails due to Go language server init error — use Claude's Edit tool on the memory file directly instead.
 - **Task 3:** Ported Dockerfile and entrypoint.sh renderers from Go `fmt.Sprintf` to TypeScript pure functions. Added `uv` (Python/astral.sh) install step and `/home/node/.local/bin` to PATH (new vs old Go code). Changed `DockerfileOpts.packages` to `string[]` instead of the old single-string `DockerAptPackages` — packages are merged with `CORE_APT_PACKAGES` at render time. Entrypoint uses `ENVOY_EGRESS_PORT` constant from config/defaults instead of hardcoding `10000`. The `renderBrowserBlock` helper conditionally emits the Playwright block rather than using the old ARG-based conditional. 47 template tests cover all security-critical invariants.
+- **Task 4:** Ported Envoy config renderer as egress-only (removed ingress listener, openclaw_gateway cluster, TLS cert references). Returns `{ yaml: string, warnings: string[] }` to surface Phase 2 gaps. TLS inspect rules emit passthrough + warning. SSH/TCP rules are skipped with warnings. All TLS allow domains go into one filter chain with combined `server_names` (same as old Go code). Uses `mergeEgressPolicy()` for hardcoded domain prepending + dedup. 34 tests cover all security invariants. Serena language server still fails due to Go not installed — used Claude's standard Read/Edit tools throughout.
 
 ---
 
