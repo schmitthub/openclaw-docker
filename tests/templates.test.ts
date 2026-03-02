@@ -184,6 +184,50 @@ describe("renderDockerfile", () => {
     expect(df).toContain("ln -sf");
     expect(df).toContain("/usr/local/bin/openclaw");
   });
+
+  it("is idempotent — same args produce identical output", () => {
+    const a = renderDockerfile(defaultOpts);
+    const b = renderDockerfile(defaultOpts);
+    expect(a).toBe(b);
+  });
+
+  it("different packages produce different Dockerfiles", () => {
+    const a = renderDockerfile({ version: "latest", packages: ["ffmpeg"] });
+    const b = renderDockerfile({ version: "latest", packages: ["imagemagick"] });
+    expect(a).not.toBe(b);
+    expect(a).toContain("ffmpeg");
+    expect(b).toContain("imagemagick");
+  });
+
+  it("different versions produce different Dockerfiles", () => {
+    const a = renderDockerfile({ version: "1.0.0" });
+    const b = renderDockerfile({ version: "2.0.0" });
+    expect(a).not.toBe(b);
+    expect(a).toContain("OPENCLAW_VERSION=1.0.0");
+    expect(b).toContain("OPENCLAW_VERSION=2.0.0");
+  });
+
+  it("empty packages list produces valid Dockerfile without trailing spaces in apt-get", () => {
+    const df = renderDockerfile({ version: "latest", packages: [] });
+    expect(df).toContain('ARG OPENCLAW_DOCKER_APT_PACKAGES=""');
+    // No trailing spaces in apt-get install lines
+    const lines = df.split("\n");
+    for (const line of lines) {
+      if (line.includes("apt-get install")) {
+        expect(line).not.toMatch(/ $/);
+      }
+    }
+  });
+
+  it("very long package lists don't break formatting", () => {
+    const packages = Array.from({ length: 30 }, (_, i) => `pkg-${i}`);
+    const df = renderDockerfile({ version: "latest", packages });
+    // All packages present in the ARG
+    expect(df).toContain(`ARG OPENCLAW_DOCKER_APT_PACKAGES="${packages.join(" ")}"`);
+    // Still a valid Dockerfile (has FROM and ENTRYPOINT)
+    expect(df).toContain(`FROM ${DOCKER_BASE_IMAGE}`);
+    expect(df).toContain('ENTRYPOINT ["entrypoint.sh"]');
+  });
 });
 
 describe("renderEntrypoint", () => {

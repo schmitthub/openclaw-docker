@@ -259,6 +259,61 @@ describe("renderEnvoyConfig", () => {
     });
   });
 
+  describe("stress and edge cases", () => {
+    it("handles 50+ user domains and produces valid config", () => {
+      const manyRules: EgressRule[] = Array.from({ length: 55 }, (_, i) => ({
+        dst: `domain-${i}.example.com`,
+        proto: "tls" as const,
+        action: "allow" as const,
+      }));
+      const { yaml, warnings } = renderEnvoyConfig(manyRules);
+      expect(warnings).toHaveLength(0);
+      // All user domains present
+      for (let i = 0; i < 55; i++) {
+        expect(yaml).toContain(`"domain-${i}.example.com"`);
+      }
+      // All hardcoded domains still present
+      for (const rule of HARDCODED_EGRESS_RULES) {
+        expect(yaml).toContain(`"${rule.dst}"`);
+      }
+      // Still has correct structure
+      expect(yaml).toContain("static_resources:");
+      expect(yaml).toContain("name: egress");
+    });
+
+    it("handles domains with hyphens, numbers, and deep subdomains", () => {
+      const userRules: EgressRule[] = [
+        { dst: "my-api-v2.sub.deep.example.com", proto: "tls", action: "allow" },
+        { dst: "123-service.io", proto: "tls", action: "allow" },
+      ];
+      const { yaml, warnings } = renderEnvoyConfig(userRules);
+      expect(warnings).toHaveLength(0);
+      expect(yaml).toContain('"my-api-v2.sub.deep.example.com"');
+      expect(yaml).toContain('"123-service.io"');
+    });
+
+    it("empty user policy (only hardcoded) produces valid config", () => {
+      const { yaml, warnings } = renderEnvoyConfig([]);
+      expect(warnings).toHaveLength(0);
+      expect(yaml).toContain("static_resources:");
+      expect(yaml).toContain("server_names:");
+      // Hardcoded domains are present
+      for (const rule of HARDCODED_EGRESS_RULES) {
+        expect(yaml).toContain(`"${rule.dst}"`);
+      }
+    });
+
+    it("YAML output has valid structure (indentation and keys)", () => {
+      const { yaml } = renderEnvoyConfig();
+      // Check key structural elements are correctly indented
+      expect(yaml).toMatch(/^static_resources:\n/m);
+      expect(yaml).toMatch(/^ {2}listeners:\n/m);
+      expect(yaml).toMatch(/^ {2}clusters:\n/m);
+      // No tabs (YAML uses spaces)
+      expect(yaml).not.toMatch(/\t/);
+    });
+  });
+
   describe("output structure", () => {
     it("starts with a generated-by comment", () => {
       const { yaml } = renderEnvoyConfig();
