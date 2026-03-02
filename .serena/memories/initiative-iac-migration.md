@@ -10,7 +10,7 @@
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: Gut repo & scaffold Pulumi TypeScript project | `complete` | Task 1 agent |
-| Task 2: Type system, config schema & domain registry | `pending` | — |
+| Task 2: Type system, config schema & domain registry | `complete` | Task 2 agent |
 | Task 3: Template engine — Dockerfile & entrypoint | `pending` | — |
 | Task 4: Template engine — Envoy egress config | `pending` | — |
 | Task 5: Server component (Hetzner VPS provisioning) | `pending` | — |
@@ -26,6 +26,7 @@
 (Agents append here as they complete tasks)
 
 - **Task 1:** Serena's Go language server will fail after deleting Go code. The `.serena/project.yml` was updated to remove `go` from languages. Future agents should only see `bash` and `typescript`.
+- **Task 2:** PYTHON_DOMAINS were in the initiative plan but not in AGENTS.md — removed to avoid unauthorized egress surface expansion. Removed `http` and `ftp` from `EgressRule.proto` union since they contradict the SNI-only egress model. Added `vitest.config.ts` to exclude `dist/` from test discovery. Used tuple type `[GatewayConfig, ...GatewayConfig[]]` for non-empty gateways enforcement. Serena's `edit_memory` tool fails due to Go language server init error — use Claude's Edit tool on the memory file directly instead.
 
 ---
 
