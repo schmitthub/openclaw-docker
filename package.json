@@ -7,7 +7,8 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run test"
+    "check": "npm run typecheck && npm run test",
+    "prepare": "husky"
   },
   "repository": {
     "type": "git",
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
+    "husky": "^9.1.7",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }

@@ -141,6 +141,30 @@ describe("HostBootstrap component", () => {
     const dockerHost = await promiseOf(bootstrap.dockerHost);
     expect(dockerHost).toMatch(/^ssh:\/\/root@/);
   });
+
+  it("extracts tailscaleIP from last line of stdout", async () => {
+    const { HostBootstrap } = await import("../components/bootstrap");
+    const bootstrap = new HostBootstrap("test-bootstrap-ip", {
+      connection: { host: "1.2.3.4", user: "root" },
+      tailscaleAuthKey: "tskey-auth-test",
+    });
+
+    // Mock stdout is "mock-stdout" — the last-line extraction returns it as-is
+    const tsIP = await promiseOf(bootstrap.tailscaleIP);
+    expect(tsIP).toBe("mock-stdout");
+  });
+
+  it("derives dockerHost from tailscaleIP", async () => {
+    const { HostBootstrap } = await import("../components/bootstrap");
+    const bootstrap = new HostBootstrap("test-bootstrap-host", {
+      connection: { host: "1.2.3.4", user: "root" },
+      tailscaleAuthKey: "tskey-auth-test",
+    });
+
+    const tsIP = await promiseOf(bootstrap.tailscaleIP);
+    const dockerHost = await promiseOf(bootstrap.dockerHost);
+    expect(dockerHost).toBe(`ssh://root@${tsIP}`);
+  });
 });
 
 describe("EnvoyEgress component", () => {
@@ -220,7 +244,7 @@ describe("Gateway component", () => {
 
     // Mock stdout provides "mock-stdout", so tailscaleUrl will be "https://mock-stdout"
     const tsUrl = await promiseOf(gw.tailscaleUrl);
-    expect(tsUrl).toContain("https://");
+    expect(tsUrl).toBe("https://mock-stdout");
   });
 
   it("creates Tailscale funnel command when tailscale is funnel", async () => {
@@ -239,7 +263,28 @@ describe("Gateway component", () => {
     });
 
     const tsUrl = await promiseOf(gw.tailscaleUrl);
-    expect(tsUrl).toContain("https://");
+    expect(tsUrl).toBe("https://mock-stdout");
+  });
+
+  it("passes custom env vars to the container", async () => {
+    const { Gateway } = await import("../components/gateway");
+    const gw = new Gateway("test-gw-env", {
+      dockerHost: "ssh://root@100.64.0.1",
+      connection: { host: "100.64.0.1", user: "root" },
+      internalNetworkName: "openclaw-internal",
+      profile: "envtest",
+      version: "latest",
+      packages: [],
+      port: 18789,
+      tailscale: "off",
+      configSet: {},
+      auth: { mode: "token", token: "test-token" },
+      env: { CUSTOM_VAR: "custom-value" },
+    });
+
+    // Component constructs successfully with custom env
+    const containerId = await promiseOf(gw.containerId);
+    expect(containerId).toBeDefined();
   });
 
   it("constructs without errors when user configSet overlaps security-critical keys", async () => {
