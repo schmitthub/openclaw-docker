@@ -212,7 +212,7 @@ Envoy enforces protocol-aware egress filtering: TLS connections are filtered by 
 | Infrastructure | `clawhub.com`, `registry.npmjs.org`                                                                                                                                                          |
 | AI providers   | `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.x.ai`                                                                                      |
 | Homebrew       | `github.com`, `*.githubusercontent.com`, `ghcr.io`, `formulae.brew.sh`                                                                                                                       |
-| Tailscale      | `tailscale.com`, `login.tailscale.com`, `controlplane.tailscale.com`, `log.tailscale.com`, `derp1–12.tailscale.com`, `*.api.letsencrypt.org` (TLS); `derp1–12.tailscale.com` (UDP STUN 3478) |
+| Tailscale      | `tailscale.com`, `login.tailscale.com`, `controlplane.tailscale.com`, `log.tailscale.com`, `derp1–28.tailscale.com`, `*.api.letsencrypt.org` (TLS); `derp1–28.tailscale.com` (UDP STUN 3478) |
 
 User-defined `egressPolicy` rules are **additive** — hardcoded domains are always present. Duplicates are deduplicated by `mergeEgressPolicy()`.
 

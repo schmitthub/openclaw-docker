@@ -442,9 +442,9 @@ describe("renderEnvoyConfig", () => {
       expect(tcpPortMappings).toHaveLength(0);
     });
 
-    it("returns 12 hardcoded UDP port mappings for default config", () => {
+    it("returns 28 hardcoded UDP port mappings for default config", () => {
       const { udpPortMappings } = renderEnvoyConfig();
-      expect(udpPortMappings).toHaveLength(12);
+      expect(udpPortMappings).toHaveLength(28);
       // All are DERP relays on STUN port 3478
       for (const m of udpPortMappings) {
         expect(m.dst).toMatch(/^derp\d+\.tailscale\.com$/);
@@ -473,8 +473,8 @@ describe("renderEnvoyConfig", () => {
       const clustersSection = yaml.split(/\n {2}clusters:\n/)[1];
       expect(clustersSection).toBeDefined();
       const clusterEntries = clustersSection!.match(/^ {2}- name:/gm);
-      // 2 base (dynamic_forward_proxy + deny) + 12 UDP DERP + 2 TCP = 16
-      expect(clusterEntries).toHaveLength(2 + 12 + 2);
+      // 2 base (dynamic_forward_proxy + deny) + 28 UDP DERP + 2 TCP = 32
+      expect(clusterEntries).toHaveLength(2 + 28 + 2);
     });
 
     it("preserves correct mapping metadata", () => {
@@ -509,12 +509,12 @@ describe("renderEnvoyConfig", () => {
         { dst: "stun2.example.com", proto: "udp", port: 3478, action: "allow" },
       ];
       const { udpPortMappings } = renderEnvoyConfig(userRules);
-      // 12 hardcoded DERP + 2 user = 14
-      expect(udpPortMappings).toHaveLength(14);
+      // 28 hardcoded DERP + 2 user = 30
+      expect(udpPortMappings).toHaveLength(30);
       // User rules come after hardcoded
       const lastTwo = udpPortMappings.slice(-2);
-      expect(lastTwo[0].envoyPort).toBe(ENVOY_UDP_PORT_BASE + 12);
-      expect(lastTwo[1].envoyPort).toBe(ENVOY_UDP_PORT_BASE + 13);
+      expect(lastTwo[0].envoyPort).toBe(ENVOY_UDP_PORT_BASE + 28);
+      expect(lastTwo[1].envoyPort).toBe(ENVOY_UDP_PORT_BASE + 29);
     });
 
     it("creates dedicated UDP proxy listener per rule", () => {
@@ -561,7 +561,7 @@ describe("renderEnvoyConfig", () => {
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("CIDR");
       // Hardcoded DERP mappings still present
-      expect(udpPortMappings).toHaveLength(12);
+      expect(udpPortMappings).toHaveLength(28);
     });
 
     it("warns for UDP rules missing port", () => {
@@ -580,7 +580,7 @@ describe("renderEnvoyConfig", () => {
       const { yaml, udpPortMappings, warnings } = renderEnvoyConfig(userRules);
       expect(warnings).toHaveLength(0);
       // Only hardcoded DERP mappings
-      expect(udpPortMappings).toHaveLength(12);
+      expect(udpPortMappings).toHaveLength(28);
       expect(yaml).not.toContain("udp_evil_com");
     });
 
@@ -667,8 +667,8 @@ describe("renderEnvoyConfig", () => {
       const { yaml } = renderEnvoyConfig();
       expect(yaml).toContain("- name: egress");
       expect(yaml).toContain("- name: dns");
-      // 12 hardcoded DERP UDP listeners
-      for (let i = 1; i <= 12; i++) {
+      // 28 hardcoded DERP UDP listeners
+      for (let i = 1; i <= 28; i++) {
         expect(yaml).toContain(`udp_derp${i}_tailscale_com_3478`);
       }
     });
@@ -679,9 +679,9 @@ describe("renderEnvoyConfig", () => {
       expect(clustersSection).toBeDefined();
       expect(clustersSection).toContain("name: dynamic_forward_proxy_cluster");
       expect(clustersSection).toContain("name: deny_cluster");
-      // Count cluster definitions: 2 base + 12 UDP DERP
+      // Count cluster definitions: 2 base + 28 UDP DERP
       const clusterEntries = clustersSection!.match(/^ {2}- name:/gm);
-      expect(clusterEntries).toHaveLength(2 + 12);
+      expect(clusterEntries).toHaveLength(2 + 28);
     });
 
     it("contains static_resources top-level key", () => {
@@ -888,8 +888,8 @@ describe("renderEnvoyConfig", () => {
       const clustersSection = yaml.split(/\n {2}clusters:\n/)[1];
       expect(clustersSection).toBeDefined();
       const clusterEntries = clustersSection!.match(/^ {2}- name:/gm);
-      // 2 base + 1 MITM + 12 UDP = 15
-      expect(clusterEntries).toHaveLength(2 + 1 + 12);
+      // 2 base + 1 MITM + 28 UDP = 31
+      expect(clusterEntries).toHaveLength(2 + 1 + 28);
     });
 
     it("MITM filter chain has http_connection_manager with dynamic_forward_proxy", () => {

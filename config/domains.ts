@@ -25,8 +25,9 @@ export const HOMEBREW_DOMAINS: EgressRule[] = [
 
 // Tailscale TLS domains — control plane, login, logging, DERP relays (TCP 443).
 // No wildcards: *.tailscale.com would allow attacker-controlled Tailscale networks.
-// DERP relay list from https://tailscale.com/docs/reference/faq/firewall-ports (derp1–12 have DNS records as of Mar 2026).
-const DERP_COUNT = 12;
+// DERP relay list from https://tailscale.com/docs/reference/faq/firewall-ports (derp1–28).
+// Tailscale activates new DERP regions dynamically — include all 28 to avoid connection resets.
+const DERP_COUNT = 28;
 export const TAILSCALE_TLS_DOMAINS: EgressRule[] = [
   { dst: "tailscale.com", proto: "tls", action: "allow" },
   { dst: "login.tailscale.com", proto: "tls", action: "allow" },

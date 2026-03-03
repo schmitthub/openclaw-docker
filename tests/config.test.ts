@@ -31,12 +31,12 @@ describe("domain registry", () => {
     expect(HOMEBREW_DOMAINS).toHaveLength(4);
   });
 
-  it("has expected Tailscale TLS domain count (5 fixed + 12 DERP)", () => {
-    expect(TAILSCALE_TLS_DOMAINS).toHaveLength(5 + 12);
+  it("has expected Tailscale TLS domain count (5 fixed + 28 DERP)", () => {
+    expect(TAILSCALE_TLS_DOMAINS).toHaveLength(5 + 28);
   });
 
-  it("has expected Tailscale UDP domain count (12 DERP)", () => {
-    expect(TAILSCALE_UDP_DOMAINS).toHaveLength(12);
+  it("has expected Tailscale UDP domain count (28 DERP)", () => {
+    expect(TAILSCALE_UDP_DOMAINS).toHaveLength(28);
   });
 
   it("includes Tailscale control plane and login domains", () => {
@@ -52,9 +52,9 @@ describe("domain registry", () => {
     expect(dsts).not.toContain("*.tailscale.com");
   });
 
-  it("includes all 12 DERP relay TLS domains", () => {
+  it("includes all 28 DERP relay TLS domains", () => {
     const dsts = TAILSCALE_TLS_DOMAINS.map((r) => r.dst);
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= 28; i++) {
       expect(dsts).toContain(`derp${i}.tailscale.com`);
     }
   });
@@ -64,8 +64,8 @@ describe("domain registry", () => {
     expect(dsts).toContain("*.api.letsencrypt.org");
   });
 
-  it("includes all 12 DERP relay UDP domains on port 3478", () => {
-    for (let i = 1; i <= 12; i++) {
+  it("includes all 28 DERP relay UDP domains on port 3478", () => {
+    for (let i = 1; i <= 28; i++) {
       const rule = TAILSCALE_UDP_DOMAINS.find(
         (r) => r.dst === `derp${i}.tailscale.com`,
       );
@@ -101,7 +101,7 @@ describe("domain registry", () => {
 
   it("UDP hardcoded rules use udp proto", () => {
     const udpRules = HARDCODED_EGRESS_RULES.filter((r) => r.proto === "udp");
-    expect(udpRules.length).toBe(12);
+    expect(udpRules.length).toBe(28);
     for (const rule of udpRules) {
       expect(rule.proto).toBe("udp");
       expect(rule.port).toBe(3478);
