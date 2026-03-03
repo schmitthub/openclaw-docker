@@ -1,8 +1,8 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as docker from "@pulumi/docker";
 import * as command from "@pulumi/command";
+import * as crypto from "crypto";
 import {
-  TailscaleMode,
   DEFAULT_OPENCLAW_CONFIG_DIR,
   DEFAULT_OPENCLAW_WORKSPACE_DIR,
   ENVOY_STATIC_IP,
@@ -16,6 +16,7 @@ import {
   TcpPortMapping,
   UdpPortMapping,
 } from "../templates";
+import type { ImageStep } from "../config/types";
 
 export interface GatewayArgs {
   /** Docker host URI, e.g. "ssh://root@<ip>" */
@@ -28,19 +29,13 @@ export interface GatewayArgs {
   profile: string;
   /** OpenClaw version to install (npm dist-tag or semver) */
   version: string;
-  /** Additional apt packages to bake into the image */
-  packages: string[];
   /** Host port for the gateway */
   port: number;
-  /** Bridge port (defaults 18790) */
-  bridgePort?: number;
-  /** Tailscale mode: "serve" (private), "funnel" (public), or "off" */
-  tailscale: TailscaleMode;
   /** Bake Playwright + Chromium into the image (~300MB) */
   installBrowser?: boolean;
-  /** openclaw config set key=value pairs (user overrides, cannot override security-critical keys) */
-  configSet: Record<string, string>;
-  /** OpenClaw subcommands run in the init container after config set (auto-prefixed with `openclaw `) */
+  /** Custom Dockerfile RUN instructions (after openclaw install, before entrypoint COPY) */
+  imageSteps?: ImageStep[];
+  /** OpenClaw subcommands run in the init container (auto-prefixed with `openclaw `) */
   setupCommands?: string[];
   /** Additional env vars for the container */
   env?: Record<string, string>;
@@ -52,14 +47,14 @@ export interface GatewayArgs {
   tcpPortMappings?: TcpPortMapping[];
   /** Per-rule port mappings for UDP egress (from EnvoyEgress) */
   udpPortMappings?: UdpPortMapping[];
-  /** Secret: Tailscale auth key (required when tailscale != "off") */
-  tailscaleAuthKey?: pulumi.Input<string>;
+  /** Secret: Tailscale auth key (always required) */
+  tailscaleAuthKey: pulumi.Input<string>;
 }
 
 export class Gateway extends pulumi.ComponentResource {
   /** Docker container ID */
   public readonly containerId: pulumi.Output<string>;
-  /** Tailscale hostname resolved from the container (empty string if tailscale is "off") */
+  /** Tailscale hostname resolved from the container */
   public readonly tailscaleUrl: pulumi.Output<string>;
 
   constructor(
@@ -71,14 +66,12 @@ export class Gateway extends pulumi.ComponentResource {
 
     const buildDir = `/opt/openclaw-deploy/build/${args.profile}`;
     const dataDir = `/opt/openclaw-deploy/data/${args.profile}`;
-    const tailscaleEnabled = args.tailscale !== "off";
 
     // Render templates (pure functions, runs at plan time)
     const dockerfile = renderDockerfile({
       version: args.version,
-      packages: args.packages,
       installBrowser: args.installBrowser ?? false,
-      bridgePort: args.bridgePort,
+      imageSteps: args.imageSteps,
     });
     const entrypoint = renderEntrypoint();
 
@@ -126,15 +119,11 @@ export class Gateway extends pulumi.ComponentResource {
     );
 
     // Step 3: Create host directories for persistent data
-    const mkdirParts = [`${dataDir}/{config,workspace,config/identity}`];
-    if (tailscaleEnabled) {
-      mkdirParts.push(`${dataDir}/tailscale`);
-    }
     const createDirs = new command.remote.Command(
       `${name}-dirs`,
       {
         connection: args.connection,
-        create: `mkdir -p ${mkdirParts.join(" ")} && chown -R 1000:1000 ${dataDir}`,
+        create: `mkdir -p ${dataDir}/{config,workspace,config/identity,tailscale} && chown -R 1000:1000 ${dataDir}`,
         delete: `rm -rf ${dataDir}`,
       },
       { parent: this },
@@ -145,35 +134,15 @@ export class Gateway extends pulumi.ComponentResource {
     // Uses --network none (pure file I/O) and --user node (no root-owned files).
     const containerName = `openclaw-gateway-${args.profile}`;
 
-    // Security-critical config — user configSet cannot override these keys.
-    const requiredConfig: Record<string, string> = {
-      "gateway.mode": "local",
-      "gateway.trustedProxies":
-        '["172.16.0.0/12","10.0.0.0/8","192.168.0.0/16"]',
-      "discovery.mdns.mode": "off",
-    };
-
-    // User overrides first, then required config on top (required always wins)
-    const allConfig: Record<string, string> = {
-      ...args.configSet,
-      ...requiredConfig,
-    };
-
-    const configCmds = Object.entries(allConfig).map(
-      ([key, value]) =>
-        `openclaw config set ${key} '${value.replace(/'/g, "'\\''")}'`,
-    );
-
-    // Append user setup commands (prefixed with `openclaw `, can reference $SECRET_ENV_VARS)
+    // Init container runs user setupCommands only (prefixed with `openclaw `)
     const setupCmds = (args.setupCommands ?? []).map(
       (cmd) => `openclaw ${cmd}`,
     );
-    const allInitCmds = [...configCmds, ...setupCmds];
 
     // Base64-encode the init script to avoid nested shell quoting issues.
     // The script runs inside the container where env vars ($SECRET_ENV_VARS)
     // are available from the --env-file.
-    const initScript = allInitCmds.join("\n");
+    const initScript = setupCmds.join("\n");
     const encodedInitScript = Buffer.from(initScript).toString("base64");
 
     // Step 4a: Write secret env file to host (separate command so secrets
@@ -183,19 +152,23 @@ export class Gateway extends pulumi.ComponentResource {
       `${name}-write-secret-env`,
       {
         connection: args.connection,
-        create: pulumi.output(args.secretEnv ?? "{}").apply((secretJson) => {
-          const secrets = JSON.parse(secretJson) as Record<string, string>;
-          const entries = Object.entries(secrets);
-          if (entries.length === 0)
-            return `touch ${envFile} && chmod 600 ${envFile}`;
-          return (
-            entries
+        create: pulumi
+          .all([
+            pulumi.output(args.secretEnv ?? "{}"),
+            pulumi.output(args.auth.token),
+          ])
+          .apply(([secretJson, token]) => {
+            const secrets = JSON.parse(secretJson) as Record<string, string>;
+            // Include gateway token so setupCommands can reference $OPENCLAW_GATEWAY_TOKEN
+            secrets["OPENCLAW_GATEWAY_TOKEN"] = token;
+            const entries = Object.entries(secrets);
+            const printfs = entries
               .map(
                 ([k, v]) => `printf '%s\\n' '${k}=${v.replace(/'/g, "'\\''")}'`,
               )
-              .join(" && ") + ` > ${envFile} && chmod 600 ${envFile}`
-          );
-        }),
+              .join(" && ");
+            return `{ ${printfs}; } > ${envFile} && chmod 600 ${envFile}`;
+          }),
         delete: `rm -f ${envFile}`,
         logging: "none",
       },
@@ -257,15 +230,9 @@ export class Gateway extends pulumi.ComponentResource {
       );
     }
 
-    // Tailscale env vars (secret authkey + socket path for CLI)
-    if (tailscaleEnabled) {
-      envs.push(`TS_SOCKET=${TAILSCALE_SOCKET_PATH}`);
-      if (args.tailscaleAuthKey) {
-        envs.push(
-          pulumi.interpolate`TAILSCALE_AUTHKEY=${args.tailscaleAuthKey}`,
-        );
-      }
-    }
+    // Tailscale env vars (always enabled)
+    envs.push(`TS_SOCKET=${TAILSCALE_SOCKET_PATH}`);
+    envs.push(pulumi.interpolate`TAILSCALE_AUTHKEY=${args.tailscaleAuthKey}`);
 
     for (const [k, v] of Object.entries(args.env ?? {})) {
       envs.push(`${k}=${v}`);
@@ -300,27 +267,23 @@ export class Gateway extends pulumi.ComponentResource {
         containerPath: ENVOY_CA_CERT_PATH,
         readOnly: true,
       },
-    ];
-
-    if (tailscaleEnabled) {
-      volumes.push({
+      {
         hostPath: `${dataDir}/tailscale`,
         containerPath: TAILSCALE_STATE_DIR,
-      });
-    }
+      },
+    ];
 
-    // Container command depends on Tailscale mode.
-    // Config is already written to the shared volume by writeConfig.
-    const containerCommand = tailscaleEnabled
-      ? [
-          "openclaw",
-          "gateway",
-          "--tailscale",
-          args.tailscale,
-          "--port",
-          `${args.port}`,
-        ]
-      : ["openclaw", "gateway", "--bind", "lan", "--port", `${args.port}`];
+    // CMD: openclaw gateway --port <port> (no --bind, no --tailscale — config handles those)
+    const containerCommand = ["openclaw", "gateway", "--port", `${args.port}`];
+
+    // Content hash of init script + Dockerfile — forces container replacement
+    // when setupCommands or image content changes (Pulumi only detects input diffs).
+    const contentHash = crypto
+      .createHash("sha256")
+      .update(initScript)
+      .update(dockerfile)
+      .digest("hex")
+      .slice(0, 12);
 
     const container = new docker.Container(
       `${name}-container`,
@@ -335,6 +298,7 @@ export class Gateway extends pulumi.ComponentResource {
         command: containerCommand,
         volumes,
         networksAdvanced: [{ name: args.internalNetworkName }],
+        labels: [{ label: "openclaw.init-hash", value: contentHash }],
       },
       {
         parent: this,
@@ -344,31 +308,29 @@ export class Gateway extends pulumi.ComponentResource {
       },
     );
 
-    // Step 6: Query Tailscale hostname from inside the container (if not "off")
-    if (tailscaleEnabled) {
-      const tailscaleHostname = new command.remote.Command(
-        `${name}-tailscale-url`,
-        {
-          connection: args.connection,
-          create: [
-            // Wait for Tailscale to authenticate inside the container (up to 120s)
-            `for i in $(seq 1 60); do docker exec ${containerName} tailscale --socket=/var/run/tailscale/tailscaled.sock status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null 2>&1 && break; sleep 2; done`,
-            // Extract DNSName via jq (installed on host by bootstrap)
-            `docker exec ${containerName} tailscale --socket=/var/run/tailscale/tailscaled.sock status --json | jq -r '.Self.DNSName' | sed 's/\\.$//'`,
-          ].join(" && "),
-        },
-        {
-          parent: this,
-          dependsOn: [container],
-        },
-      );
+    // Step 6: Query Tailscale hostname from inside the container
+    const tailscaleHostname = new command.remote.Command(
+      `${name}-tailscale-url`,
+      {
+        connection: args.connection,
+        create: [
+          // Wait for Tailscale to authenticate inside the container (up to 120s)
+          `for i in $(seq 1 60); do docker exec ${containerName} tailscale --socket=/var/run/tailscale/tailscaled.sock status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null 2>&1 && break; sleep 2; done`,
+          // Extract DNSName via jq (installed on host by bootstrap)
+          `docker exec ${containerName} tailscale --socket=/var/run/tailscale/tailscaled.sock status --json | jq -r '.Self.DNSName' | sed 's/\\.$//'`,
+        ].join(" && "),
+        // Re-run when the container is replaced (new container ID = new Tailscale identity)
+        triggers: [container.id],
+      },
+      {
+        parent: this,
+        dependsOn: [container],
+      },
+    );
 
-      this.tailscaleUrl = tailscaleHostname.stdout.apply(
-        (hostname) => `https://${hostname.trim()}`,
-      );
-    } else {
-      this.tailscaleUrl = pulumi.output("");
-    }
+    this.tailscaleUrl = tailscaleHostname.stdout.apply(
+      (hostname) => `https://${hostname.trim()}`,
+    );
 
     // Outputs
     this.containerId = container.id;

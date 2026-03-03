@@ -175,6 +175,13 @@ export class EnvoyEgress extends pulumi.ComponentResource {
         restart: "unless-stopped",
         // Envoy runs as non-root 'envoy' user — allow binding to port 53
         sysctls: { "net.ipv4.ip_unprivileged_port_start": "53" },
+        healthcheck: {
+          tests: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/10000"],
+          interval: "5s",
+          timeout: "3s",
+          retries: 5,
+          startPeriod: "5s",
+        },
         networksAdvanced: [
           {
             name: internalNetwork.name,

@@ -552,21 +552,20 @@ describe("Gateway component", () => {
       internalNetworkName: "openclaw-internal",
       profile: "dev",
       version: "latest",
-      packages: [],
       port: 18789,
-      tailscale: "off",
-      configSet: {},
       auth: { mode: "token", token: "test-token" },
+      tailscaleAuthKey: "tskey-auth-test",
     });
 
     const containerId = await promiseOf(gw.containerId);
     expect(containerId).toBeDefined();
 
+    // Tailscale is always enabled — mock stdout → "https://mock-stdout"
     const tsUrl = await promiseOf(gw.tailscaleUrl);
-    expect(tsUrl).toBe("");
+    expect(tsUrl).toBe("https://mock-stdout");
   });
 
-  it("creates Tailscale serve via container when tailscale is serve", async () => {
+  it("always queries Tailscale hostname", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw-serve", {
       dockerHost: "ssh://root@100.64.0.1",
@@ -574,32 +573,8 @@ describe("Gateway component", () => {
       internalNetworkName: "openclaw-internal",
       profile: "prod",
       version: "2026.2",
-      packages: ["ffmpeg"],
       port: 18789,
-      tailscale: "serve",
-      configSet: { "llm.model": "claude-3-opus" },
       auth: { mode: "token", token: "prod-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-    });
-
-    // Mock stdout provides "mock-stdout", so tailscaleUrl will be "https://mock-stdout"
-    const tsUrl = await promiseOf(gw.tailscaleUrl);
-    expect(tsUrl).toBe("https://mock-stdout");
-  });
-
-  it("creates Tailscale funnel via container when tailscale is funnel", async () => {
-    const { Gateway } = await import("../components/gateway");
-    const gw = new Gateway("test-gw-funnel", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
-      internalNetworkName: "openclaw-internal",
-      profile: "public",
-      version: "latest",
-      packages: [],
-      port: 18789,
-      tailscale: "funnel",
-      configSet: {},
-      auth: { mode: "token", token: "funnel-token" },
       tailscaleAuthKey: "tskey-auth-test",
     });
 
@@ -615,39 +590,14 @@ describe("Gateway component", () => {
       internalNetworkName: "openclaw-internal",
       profile: "envtest",
       version: "latest",
-      packages: [],
       port: 18789,
-      tailscale: "off",
-      configSet: {},
       auth: { mode: "token", token: "test-token" },
+      tailscaleAuthKey: "tskey-auth-test",
       env: { CUSTOM_VAR: "custom-value" },
     });
 
-    // Component constructs successfully with custom env
     const containerId = await promiseOf(gw.containerId);
     expect(containerId).toBeDefined();
-  });
-
-  it("constructs without errors when user configSet overlaps security-critical keys", async () => {
-    const { Gateway } = await import("../components/gateway");
-    // Required config (gateway.mode, gateway.auth.*, etc.) always wins.
-    const gw = new Gateway("test-gw-config", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
-      internalNetworkName: "openclaw-internal",
-      profile: "test",
-      version: "latest",
-      packages: [],
-      port: 18789,
-      tailscale: "off",
-      configSet: {
-        "gateway.mode": "should-be-overridden",
-        "custom.setting": "user-value",
-      },
-      auth: { mode: "token", token: "test-token" },
-    });
-
-    expect(gw).toBeDefined();
   });
 
   it("constructs with setupCommands without errors", async () => {
@@ -658,15 +608,13 @@ describe("Gateway component", () => {
       internalNetworkName: "openclaw-internal",
       profile: "setuptest",
       version: "latest",
-      packages: [],
       port: 18789,
-      tailscale: "off",
-      configSet: {},
       setupCommands: [
-        "models set claude-sonnet-4-5",
-        'onboard --auth-choice apiKey --token-provider openrouter --token "$OPENROUTER_API_KEY"',
+        'onboard --non-interactive --tailscale serve --accept-risk --mode local --gateway-bind loopback --gateway-token "$OPENCLAW_GATEWAY_TOKEN" --no-install-daemon --auth-choice token --token-provider anthropic --token "$ANTHROPIC_API_KEY" --skip-channels --skip-skills --skip-daemon --skip-health',
+        "config set gateway.controlUi.basePath /openclaw",
       ],
       auth: { mode: "token", token: "test-token" },
+      tailscaleAuthKey: "tskey-auth-test",
     });
 
     const containerId = await promiseOf(gw.containerId);
@@ -681,15 +629,13 @@ describe("Gateway component", () => {
       internalNetworkName: "openclaw-internal",
       profile: "secrettest",
       version: "latest",
-      packages: [],
       port: 18789,
-      tailscale: "off",
-      configSet: {},
       setupCommands: [
-        'onboard --auth-choice apiKey --token "$OPENROUTER_API_KEY"',
+        'onboard --non-interactive --auth-choice token --token-provider openrouter --token "$OPENROUTER_API_KEY" --skip-channels --skip-skills --skip-daemon --skip-health',
       ],
       secretEnv: JSON.stringify({ OPENROUTER_API_KEY: "sk-or-test-123" }),
       auth: { mode: "token", token: "test-token" },
+      tailscaleAuthKey: "tskey-auth-test",
     });
 
     const containerId = await promiseOf(gw.containerId);
@@ -704,11 +650,9 @@ describe("Gateway component", () => {
       internalNetworkName: "openclaw-internal",
       profile: "tcptest",
       version: "latest",
-      packages: [],
       port: 18789,
-      tailscale: "off",
-      configSet: {},
       auth: { mode: "token", token: "test-token" },
+      tailscaleAuthKey: "tskey-auth-test",
       tcpPortMappings: [
         { dst: "github.com", dstPort: 22, proto: "ssh", envoyPort: 10001 },
         {
@@ -717,6 +661,27 @@ describe("Gateway component", () => {
           proto: "tcp",
           envoyPort: 10002,
         },
+      ],
+    });
+
+    const containerId = await promiseOf(gw.containerId);
+    expect(containerId).toBeDefined();
+  });
+
+  it("constructs with imageSteps without errors", async () => {
+    const { Gateway } = await import("../components/gateway");
+    const gw = new Gateway("test-gw-steps", {
+      dockerHost: "ssh://root@100.64.0.1",
+      connection: { host: "100.64.0.1", user: "root" },
+      internalNetworkName: "openclaw-internal",
+      profile: "stepstest",
+      version: "latest",
+      port: 18789,
+      auth: { mode: "token", token: "test-token" },
+      tailscaleAuthKey: "tskey-auth-test",
+      imageSteps: [
+        { user: "root", run: "apt-get install -y ffmpeg" },
+        { user: "node", run: "npm install -g some-tool" },
       ],
     });
 

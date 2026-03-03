@@ -23,11 +23,14 @@ export const ENVOY_MITM_CLUSTER_NAME = "mitm_forward_cluster";
 
 // Gateway defaults
 export const DEFAULT_GATEWAY_PORT = 18789;
-export const DEFAULT_BRIDGE_PORT = 18790;
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/home/node/.openclaw";
 export const DEFAULT_OPENCLAW_WORKSPACE_DIR = "/home/node/.openclaw/workspace";
-export const DEFAULT_GATEWAY_BIND = "lan";
 export const DOCKER_BASE_IMAGE = "node:22-bookworm";
+
+// Web tools (always installed and started)
+export const TTYD_PORT = 7681;
+export const FILEBROWSER_PORT = 8080;
+export const CONTROL_UI_BASE_PATH = "/openclaw";
 
 // Core apt packages (always installed)
 export const CORE_APT_PACKAGES = [

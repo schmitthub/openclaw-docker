@@ -18,20 +18,20 @@ export interface EgressRule {
 import { PROVIDERS } from "./defaults";
 export type VpsProvider = (typeof PROVIDERS)[number];
 
-// Tailscale mode per gateway
-export type TailscaleMode = "serve" | "funnel" | "off";
+// Custom Dockerfile RUN instructions (placed after openclaw install, before entrypoint COPY)
+export interface ImageStep {
+  user: "root" | "node";
+  run: string;
+}
 
 // Gateway configuration
 export interface GatewayConfig {
   profile: string; // unique name for this gateway instance
   version: string; // openclaw version (npm dist-tag or semver)
-  packages: string[]; // apt packages to bake into image
-  port: number; // host port (maps to 18789 inside container)
-  bridgePort?: number; // bridge port (defaults 18790)
-  tailscale: TailscaleMode;
+  port: number; // gateway port inside container
   installBrowser?: boolean; // bake Playwright + Chromium (~300MB)
-  configSet: Record<string, string>; // openclaw config set key=value pairs
-  setupCommands?: string[]; // openclaw subcommands run in init container after configSet (e.g. 'onboard ...')
+  imageSteps?: ImageStep[]; // custom Dockerfile RUN instructions
+  setupCommands?: string[]; // openclaw subcommands run in init container (e.g. 'onboard ...')
   env?: Record<string, string>; // additional env vars for container
 }
 

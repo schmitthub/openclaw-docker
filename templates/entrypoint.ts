@@ -1,4 +1,8 @@
-import { ENVOY_EGRESS_PORT } from "../config/defaults";
+import {
+  ENVOY_EGRESS_PORT,
+  TTYD_PORT,
+  FILEBROWSER_PORT,
+} from "../config/defaults";
 
 export function renderEntrypoint(): string {
   return `#!/bin/bash
@@ -33,8 +37,8 @@ INTERNAL_SUBNET="\${ENVOY_IP%.*}.0/24"
 # so the kernel rejects connections to external IPs with "Network is unreachable" before
 # iptables can DNAT them. This route makes the routing decision succeed; the NAT table
 # then rewrites the destination to Envoy's egress listener.
-ip route add default via "$ENVOY_IP" 2>/dev/null || \
-  ip route show default | grep -q "$ENVOY_IP" || \
+ip route add default via "$ENVOY_IP" 2>/dev/null || \\
+  ip route show default | grep -q "$ENVOY_IP" || \\
   { echo "ERROR: no default route via $ENVOY_IP — egress will be unreachable" >&2; exit 1; }
 
 # Flush any existing rules (filter + nat tables).
@@ -73,13 +77,13 @@ if [ -n "\${OPENCLAW_TCP_MAPPINGS:-}" ]; then
     else
       # Domain — resolve to IPv4 for iptables matching
       RESOLVE_ERR="$(getent ahostsv4 "$DST" 2>&1 1>/dev/null)" || true
-      RESOLVED_IP="$(getent ahostsv4 "$DST" 2>/dev/null | head -1 | awk '{print $1}')"
+      RESOLVED_IP="$(getent ahostsv4 "$DST" 2>/dev/null | head -1 | awk '{print $1}')" || true
       if [ -z "$RESOLVED_IP" ] || ! echo "$RESOLVED_IP" | grep -qE '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$'; then
         echo "WARN: cannot resolve '$DST' for TCP mapping\${RESOLVE_ERR:+ ($RESOLVE_ERR)} — skipping" >&2
         continue
       fi
     fi
-    if ! iptables -t nat -A OUTPUT -p tcp -d "$RESOLVED_IP" --dport "$DST_PORT" \
+    if ! iptables -t nat -A OUTPUT -p tcp -d "$RESOLVED_IP" --dport "$DST_PORT" \\
          -j DNAT --to-destination "$ENVOY_IP":"$ENVOY_PORT" 2>&1; then
       echo "ERROR: iptables DNAT failed for $DST:$DST_PORT -> envoy:$ENVOY_PORT (resolved=$RESOLVED_IP)" >&2
       exit 1
@@ -104,7 +108,7 @@ if [ -n "\${OPENCLAW_UDP_MAPPINGS:-}" ]; then
       continue
     else
       RESOLVE_ERR="$(getent ahostsv4 "$DST" 2>&1 1>/dev/null)" || true
-      RESOLVED_IP="$(getent ahostsv4 "$DST" 2>/dev/null | head -1 | awk '{print $1}')"
+      RESOLVED_IP="$(getent ahostsv4 "$DST" 2>/dev/null | head -1 | awk '{print $1}')" || true
       if [ -z "$RESOLVED_IP" ] || ! echo "$RESOLVED_IP" | grep -qE '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$'; then
         echo "WARN: cannot resolve '$DST' for UDP mapping\${RESOLVE_ERR:+ ($RESOLVE_ERR)} — skipping" >&2
         continue
@@ -140,29 +144,42 @@ iptables -A OUTPUT -d "$INTERNAL_SUBNET" -j ACCEPT
 # Log and drop everything else (helps debug blocked connections).
 iptables -A OUTPUT -j LOG --log-prefix "OPENCLAW-BLOCKED: " --log-level warning 2>/dev/null || true
 
-# Start Tailscale daemon if state directory is mounted (indicates Tailscale is enabled).
+# Start Tailscale daemon (always enabled — state dir is always mounted).
 # Ordering: iptables runs FIRST so Tailscale's control plane traffic routes through Envoy.
 # tailscaled starts AFTER iptables so it can reach controlplane.tailscale.com via Envoy's TLS proxy.
 # WireGuard UDP is blocked by iptables FILTER → Tailscale auto-falls back to DERP relays (TCP 443).
-if [ -d "/var/lib/tailscale" ]; then
-  mkdir -p /var/run/tailscale
-  tailscaled --tun=userspace-networking \\
-    --state=/var/lib/tailscale/tailscaled.state \\
-    --socket=/var/run/tailscale/tailscaled.sock &
+mkdir -p /var/run/tailscale
+tailscaled --tun=userspace-networking \\
+  --state=/var/lib/tailscale/tailscaled.state \\
+  --socket=/var/run/tailscale/tailscaled.sock &
 
-  # Wait for daemon to be ready (up to 30s)
-  for i in $(seq 1 30); do
-    tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1 && break
-    sleep 1
-  done
+# Wait for daemon to be ready (up to 30s)
+for i in $(seq 1 30); do
+  tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1 && break
+  sleep 1
+done
 
-  # Authenticate if authkey provided and not already authenticated
-  if [ -n "\${TAILSCALE_AUTHKEY:-}" ]; then
-    if ! tailscale --socket=/var/run/tailscale/tailscaled.sock status 2>&1 | grep -q "^100\\."; then
-      tailscale --socket=/var/run/tailscale/tailscaled.sock up --authkey="$TAILSCALE_AUTHKEY"
-    fi
+# Authenticate if authkey provided and not already authenticated
+if [ -n "\${TAILSCALE_AUTHKEY:-}" ]; then
+  if ! tailscale --socket=/var/run/tailscale/tailscaled.sock status 2>&1 | grep -q "^100\\."; then
+    tailscale --socket=/var/run/tailscale/tailscaled.sock up --authkey="$TAILSCALE_AUTHKEY" --ssh
   fi
 fi
+
+# Enable Tailscale SSH and allow the node user to run 'tailscale serve'.
+tailscale --socket=/var/run/tailscale/tailscaled.sock set --ssh --operator=node
+
+# Start web tools on loopback (accessible only via Tailscale Serve).
+if command -v ttyd >/dev/null 2>&1; then
+  gosu node ttyd --port ${TTYD_PORT} --interface lo --writable bash &
+fi
+if command -v filebrowser >/dev/null 2>&1; then
+  gosu node filebrowser --address 127.0.0.1 --port ${FILEBROWSER_PORT} --noauth --root /home/node --baseurl /files &
+fi
+
+# Configure Tailscale Serve paths for web tools.
+tailscale --socket=/var/run/tailscale/tailscaled.sock serve --bg --set-path /shell ${TTYD_PORT} || true
+tailscale --socket=/var/run/tailscale/tailscaled.sock serve --bg --set-path /files ${FILEBROWSER_PORT} || true
 
 # Drop privileges and exec the CMD as the node user.
 exec gosu node "$@"

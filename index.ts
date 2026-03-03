@@ -1,7 +1,7 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as random from "@pulumi/random";
 import { Server, HostBootstrap, EnvoyEgress, Gateway } from "./components";
-import { EgressRule, GatewayConfig, VpsProvider } from "./config/types";
+import type { EgressRule, GatewayConfig, VpsProvider } from "./config/types";
 import { PROVIDERS } from "./config/defaults";
 
 // --- Pulumi Config ---
@@ -98,10 +98,11 @@ const gatewayInstances = gateways.map((gw) => {
   // Auto-generate gateway token if not manually set. Stored in Pulumi state
   // (encrypted), stable across deploys. Manual override via config is optional.
   const manualToken = cfg.getSecret(`gatewayToken-${gw.profile}`);
-  const generatedToken = new random.RandomBytes(`gateway-token-${gw.profile}`, {
-    length: 32,
-  });
-  const token = manualToken ?? generatedToken.hex;
+  const generatedToken = new random.RandomPassword(
+    `gateway-token-${gw.profile}`,
+    { length: 32, special: false },
+  );
+  const token = manualToken ?? generatedToken.result;
 
   const secretEnv = cfg.getSecret(`gatewaySecretEnv-${gw.profile}`);
   const gateway = new Gateway(
@@ -112,19 +113,16 @@ const gatewayInstances = gateways.map((gw) => {
       internalNetworkName: envoy.internalNetworkName,
       profile: gw.profile,
       version: gw.version,
-      packages: gw.packages,
       port: gw.port,
-      bridgePort: gw.bridgePort,
-      tailscale: gw.tailscale,
       installBrowser: gw.installBrowser,
-      configSet: gw.configSet ?? {},
+      imageSteps: gw.imageSteps,
       setupCommands: gw.setupCommands,
       env: gw.env,
       secretEnv,
       auth: { mode: "token", token },
       tcpPortMappings: envoy.tcpPortMappings,
       udpPortMappings: envoy.udpPortMappings,
-      tailscaleAuthKey: gw.tailscale !== "off" ? tailscaleAuthKey : undefined,
+      tailscaleAuthKey: tailscaleAuthKey,
     },
     { dependsOn: [envoy] },
   );
