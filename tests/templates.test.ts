@@ -81,9 +81,11 @@ describe("renderDockerfile", () => {
     expect(df).toContain('ENTRYPOINT ["entrypoint.sh"]');
   });
 
-  it("sets CMD to openclaw gateway --allow-unconfigured", () => {
+  it("sets CMD to openclaw gateway with default bind and port", () => {
     const df = renderDockerfile(defaultOpts);
-    expect(df).toContain('CMD ["openclaw", "gateway", "--allow-unconfigured"]');
+    expect(df).toContain(
+      `CMD ["openclaw", "gateway", "--bind", "${DEFAULT_GATEWAY_BIND}", "--port", "${DEFAULT_GATEWAY_PORT}"]`,
+    );
   });
 
   it("uses default config dir when not specified", () => {
@@ -185,6 +187,11 @@ describe("renderDockerfile", () => {
     const df = renderDockerfile(defaultOpts);
     expect(df).toContain("ln -sf");
     expect(df).toContain("/usr/local/bin/openclaw");
+  });
+
+  it("installs Tailscale via official install script", () => {
+    const df = renderDockerfile(defaultOpts);
+    expect(df).toContain("https://tailscale.com/install.sh");
   });
 
   it("is idempotent — same args produce identical output", () => {
@@ -381,6 +388,85 @@ describe("renderEntrypoint", () => {
     it("only processes mappings when env var is set", () => {
       // Should be conditional on OPENCLAW_TCP_MAPPINGS being non-empty
       expect(ep).toContain("${OPENCLAW_TCP_MAPPINGS:-}");
+    });
+  });
+
+  describe("UDP mappings", () => {
+    it("contains OPENCLAW_UDP_MAPPINGS env var reference", () => {
+      expect(ep).toContain("OPENCLAW_UDP_MAPPINGS");
+    });
+
+    it("parses semicolon-delimited UDP entries with pipe field separator", () => {
+      expect(ep).toContain("UDP_ENTRIES");
+    });
+
+    it("resolves UDP domains via getent ahostsv4", () => {
+      // Both TCP and UDP sections use getent ahostsv4 for domain resolution
+      const matches = ep.match(/getent ahostsv4/g);
+      expect(matches!.length).toBeGreaterThanOrEqual(4); // 2 per mapping type (resolve + validate)
+    });
+
+    it("per-destination UDP DNAT rules appear before TCP catch-all", () => {
+      const udpMappingIdx = ep.indexOf("OPENCLAW_UDP_MAPPINGS");
+      const catchAllIdx = ep.indexOf(
+        `--to-destination "$ENVOY_IP":${ENVOY_EGRESS_PORT}`,
+      );
+      expect(udpMappingIdx).toBeGreaterThan(-1);
+      expect(catchAllIdx).toBeGreaterThan(-1);
+      expect(udpMappingIdx).toBeLessThan(catchAllIdx);
+    });
+
+    it("uses -p udp for UDP DNAT rules", () => {
+      expect(ep).toContain("iptables -t nat -A OUTPUT -p udp");
+    });
+
+    it("warns on malformed UDP entries", () => {
+      expect(ep).toContain("malformed UDP mapping");
+    });
+
+    it("only processes UDP mappings when env var is set", () => {
+      expect(ep).toContain("${OPENCLAW_UDP_MAPPINGS:-}");
+    });
+  });
+
+  describe("Tailscale daemon startup", () => {
+    it("starts tailscaled conditionally on state directory", () => {
+      expect(ep).toContain('if [ -d "/var/lib/tailscale" ]');
+      expect(ep).toContain("tailscaled --tun=userspace-networking");
+    });
+
+    it("uses userspace networking (no TUN device needed)", () => {
+      expect(ep).toContain("--tun=userspace-networking");
+    });
+
+    it("waits for daemon to be ready", () => {
+      expect(ep).toContain("seq 1 30");
+      expect(ep).toContain(
+        "tailscale --socket=/var/run/tailscale/tailscaled.sock status",
+      );
+    });
+
+    it("authenticates with TAILSCALE_AUTHKEY if set", () => {
+      expect(ep).toContain("${TAILSCALE_AUTHKEY:-}");
+      expect(ep).toContain(
+        "tailscale --socket=/var/run/tailscale/tailscaled.sock up --authkey",
+      );
+    });
+
+    it("runs tailscaled AFTER iptables setup", () => {
+      const iptablesIdx = ep.indexOf("iptables -P OUTPUT DROP");
+      const tailscaledIdx = ep.indexOf("tailscaled --tun=userspace-networking");
+      expect(iptablesIdx).toBeGreaterThan(-1);
+      expect(tailscaledIdx).toBeGreaterThan(-1);
+      expect(tailscaledIdx).toBeGreaterThan(iptablesIdx);
+    });
+
+    it("runs tailscaled BEFORE exec gosu node", () => {
+      const tailscaledIdx = ep.indexOf("tailscaled --tun=userspace-networking");
+      const gosuIdx = ep.indexOf('exec gosu node "$@"');
+      expect(tailscaledIdx).toBeGreaterThan(-1);
+      expect(gosuIdx).toBeGreaterThan(-1);
+      expect(tailscaledIdx).toBeLessThan(gosuIdx);
     });
   });
 

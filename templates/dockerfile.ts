@@ -70,6 +70,9 @@ USER node
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 USER root
 
+# Install Tailscale (used for gateway ingress via tailscale serve/funnel).
+RUN curl -fsSL https://tailscale.com/install.sh | sh
+
 WORKDIR /app
 RUN chown node:node /app
 
@@ -104,7 +107,7 @@ ENV OPENCLAW_PREFER_PNPM=1
 ENV NODE_ENV=production
 
 ENTRYPOINT ["entrypoint.sh"]
-CMD ["openclaw", "gateway", "--allow-unconfigured"]
+CMD ["openclaw", "gateway", "--bind", "${gatewayBind}", "--port", "${gatewayPort}"]
 `;
 }
 

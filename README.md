@@ -3,8 +3,6 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Pulumi](https://img.shields.io/badge/Pulumi-IaC-8A3391?logo=pulumi&logoColor=white)](https://www.pulumi.com)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-supported-6E56CF)](https://docs.openclaw.ai)
-![macOS](https://img.shields.io/badge/macOS-supported-000000?logo=apple&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/schmitthub/openclaw-docker)
 
 Pulumi TypeScript IaC that provisions remote VPS hosts and deploys [OpenClaw](https://openclaw.ai) gateway fleets with network-level egress isolation via Envoy proxy and Tailscale networking.
@@ -13,17 +11,19 @@ Pulumi TypeScript IaC that provisions remote VPS hosts and deploys [OpenClaw](ht
 
 ## Table of Contents
 
-- [Architecture](#architecture)
-- [Threat Model](#threat-model)
-- [Prerequisites](#prerequisites)
-- [Quickstart](#quickstart)
-- [Stack Configuration](#stack-configuration)
-- [Component Hierarchy](#component-hierarchy)
-- [Egress Domain Whitelist](#egress-domain-whitelist)
-- [Common Operations](#common-operations)
-- [Development](#development)
-- [Repository Structure](#repository-structure)
-- [Known Limitations](#known-limitations)
+- [openclaw-deploy](#openclaw-deploy)
+  - [Table of Contents](#table-of-contents)
+  - [Architecture](#architecture)
+  - [Threat Model](#threat-model)
+  - [Prerequisites](#prerequisites)
+  - [Quickstart](#quickstart)
+  - [Stack Configuration](#stack-configuration)
+  - [Component Hierarchy](#component-hierarchy)
+  - [Egress Domain Whitelist](#egress-domain-whitelist)
+  - [Common Operations](#common-operations)
+  - [Development](#development)
+  - [Repository Structure](#repository-structure)
+  - [Known Limitations](#known-limitations)
 
 ## Architecture
 

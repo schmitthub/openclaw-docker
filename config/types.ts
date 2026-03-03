@@ -7,7 +7,7 @@ export interface PathRule {
 
 export interface EgressRule {
   dst: string; // domain "x.com" | IPv4 "140.82.121.4" | IPv6 "2001:db8::1" | CIDR "10.0.0.0/24"
-  proto: "tls" | "ssh" | "tcp"; // tls: SNI-based passthrough or MITM inspection; ssh/tcp: per-rule Envoy port mapping
+  proto: "tls" | "ssh" | "tcp" | "udp"; // tls: SNI-based passthrough or MITM inspection; ssh/tcp/udp: per-rule Envoy port mapping
   port?: number; // required for ssh/tcp, optional for tls (default 443)
   action: "allow" | "deny";
   inspect?: boolean; // MITM TLS termination for path-level rules
@@ -31,6 +31,7 @@ export interface GatewayConfig {
   tailscale: TailscaleMode;
   installBrowser?: boolean; // bake Playwright + Chromium (~300MB)
   configSet: Record<string, string>; // openclaw config set key=value pairs
+  setupCommands?: string[]; // openclaw subcommands run in init container after configSet (e.g. 'onboard ...')
   env?: Record<string, string>; // additional env vars for container
 }
 
@@ -46,13 +47,23 @@ export interface TcpPortMapping {
   envoyPort: number;
 }
 
+// Per-rule port mapping for UDP egress (passed to gateway containers)
+export interface UdpPortMapping {
+  /** Destination domain or IP */
+  dst: string;
+  /** Destination port (e.g. 3478 for STUN) */
+  dstPort: number;
+  /** Dedicated Envoy listener port for this mapping */
+  envoyPort: number;
+}
+
 // Full stack configuration
 export interface StackConfig {
   // VPS
   provider: VpsProvider;
   serverType: string; // e.g. "cx22" (Hetzner), "s-1vcpu-1gb" (DO), "VM.Standard.A1.Flex" (OCI)
-  region: string; // e.g. "fsn1" (Hetzner), "nyc1" (DO), availability domain (OCI)
-  sshKeyId: string; // provider-specific SSH key ID or fingerprint
+  region?: string; // Required for Hetzner/DO. Oracle auto-discovers availability domain if omitted.
+  sshKeyId?: string; // provider-specific SSH key ID or fingerprint (auto-generated if omitted)
 
   // Tailscale
   tailscaleAuthKey: string; // secret: one-time auth key

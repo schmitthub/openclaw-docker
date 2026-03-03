@@ -29,6 +29,35 @@ beforeAll(() => {
           state.id = state.id ?? "ocid1.instance.oc1.phx.mock";
         }
 
+        // tls.PrivateKey — provide mock key material
+        if (args.type === "tls:index/privateKey:PrivateKey") {
+          state.privateKeyOpenssh =
+            state.privateKeyOpenssh ??
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nmock\n-----END OPENSSH PRIVATE KEY-----";
+          state.privateKeyPem =
+            state.privateKeyPem ??
+            "-----BEGIN PRIVATE KEY-----\nmock\n-----END PRIVATE KEY-----";
+          state.publicKeyOpenssh =
+            state.publicKeyOpenssh ?? "ssh-ed25519 AAAAMOCKPUBLICKEY mock@test";
+          state.publicKeyPem =
+            state.publicKeyPem ??
+            "-----BEGIN PUBLIC KEY-----\nmock\n-----END PUBLIC KEY-----";
+          state.publicKeyFingerprintMd5 =
+            state.publicKeyFingerprintMd5 ?? "aa:bb:cc:dd:ee:ff";
+          state.publicKeyFingerprintSha256 =
+            state.publicKeyFingerprintSha256 ?? "SHA256:mock";
+        }
+
+        // hcloud.SshKey — provide a mock fingerprint
+        if (args.type === "hcloud:index/sshKey:SshKey") {
+          state.fingerprint = state.fingerprint ?? "aa:bb:cc:dd:ee:ff";
+        }
+
+        // digitalocean.SshKey — provide a mock fingerprint
+        if (args.type === "digitalocean:index/sshKey:SshKey") {
+          state.fingerprint = state.fingerprint ?? "ab:cd:ef:12:34:56";
+        }
+
         // command.remote.Command — provide stdout/stderr
         if (args.type === "command:remote:Command") {
           state.stdout = state.stdout ?? "mock-stdout";
@@ -49,6 +78,34 @@ beforeAll(() => {
           return {
             publicIpAddress: "152.70.100.30",
             privateIpAddress: "10.0.0.2",
+          };
+        }
+        // oci.identity.getAvailabilityDomains — return a mock AD
+        if (
+          args.token ===
+          "oci:Identity/getAvailabilityDomains:getAvailabilityDomains"
+        ) {
+          return {
+            availabilityDomains: [
+              {
+                compartmentId: "ocid1.compartment.oc1..mock",
+                id: "ocid1.availabilitydomain.oc1.phx.mock",
+                name: "Uocm:PHX-AD-1",
+              },
+            ],
+          };
+        }
+        // oci.core.getImages — return a mock Ubuntu image
+        if (args.token === "oci:Core/getImages:getImages") {
+          return {
+            images: [
+              {
+                id: "ocid1.image.oc1.phx.mock-ubuntu-2404",
+                displayName: "Canonical-Ubuntu-24.04-aarch64-2026.03.01-0",
+                operatingSystem: "Canonical Ubuntu",
+                operatingSystemVersion: "24.04",
+              },
+            ],
           };
         }
         return args.inputs;
@@ -239,34 +296,96 @@ describe("Server component", () => {
     ).toThrow(/compartmentId/);
   });
 
-  it("throws when Oracle provider is missing subnetId", async () => {
+  it("auto-provisions Oracle networking, image, and AD when only compartmentId provided", async () => {
     const { Server } = await import("../components/server");
-    expect(
-      () =>
-        new Server("test-oci-no-subnet", {
-          provider: "oracle",
-          serverType: "VM.Standard.A1.Flex",
-          region: "Uocm:PHX-AD-1",
-          sshKeyId: "ssh-ed25519 AAAA...",
-          compartmentId: "ocid1.compartment.oc1..mock",
-          image: "ocid1.image.oc1.phx.mock",
-        }),
-    ).toThrow(/subnetId/);
+    const server = new Server("test-oci-auto", {
+      provider: "oracle",
+      serverType: "VM.Standard.A1.Flex",
+      compartmentId: "ocid1.compartment.oc1..mock",
+    });
+
+    const ip = await promiseOf(server.ipAddress);
+    expect(ip).toBe("152.70.100.30");
+
+    const conn = await promiseOf(server.connection);
+    expect(conn.host).toBe("152.70.100.30");
+    expect(conn.user).toBe("root");
+    expect(conn.privateKey).toBeDefined();
   });
 
-  it("throws when Oracle provider is missing image", async () => {
+  it("throws when Hetzner provider is missing region", async () => {
     const { Server } = await import("../components/server");
     expect(
       () =>
-        new Server("test-oci-no-image", {
-          provider: "oracle",
-          serverType: "VM.Standard.A1.Flex",
-          region: "Uocm:PHX-AD-1",
-          sshKeyId: "ssh-ed25519 AAAA...",
-          compartmentId: "ocid1.compartment.oc1..mock",
-          subnetId: "ocid1.subnet.oc1.phx.mock",
+        new Server("test-hetzner-no-region", {
+          provider: "hetzner",
+          serverType: "cx22",
+          sshKeyId: "12345",
         }),
-    ).toThrow(/image/);
+    ).toThrow(/region/);
+  });
+
+  it("auto-generates SSH key when sshKeyId is omitted (Hetzner)", async () => {
+    const { Server } = await import("../components/server");
+    const server = new Server("test-auto-key-hetzner", {
+      provider: "hetzner",
+      serverType: "cx22",
+      region: "fsn1",
+    });
+
+    const conn = await promiseOf(server.connection);
+    expect(conn.host).toBe("203.0.113.10");
+    expect(conn.user).toBe("root");
+    expect(conn.privateKey).toBeDefined();
+    expect(conn.privateKey).toContain("OPENSSH PRIVATE KEY");
+  });
+
+  it("auto-generates SSH key when sshKeyId is omitted (DigitalOcean)", async () => {
+    const { Server } = await import("../components/server");
+    const server = new Server("test-auto-key-do", {
+      provider: "digitalocean",
+      serverType: "s-1vcpu-1gb",
+      region: "nyc1",
+    });
+
+    const conn = await promiseOf(server.connection);
+    expect(conn.host).toBe("198.51.100.20");
+    expect(conn.user).toBe("root");
+    expect(conn.privateKey).toBeDefined();
+    expect(conn.privateKey).toContain("OPENSSH PRIVATE KEY");
+  });
+
+  it("auto-generates SSH key when sshKeyId is omitted (Oracle)", async () => {
+    const { Server } = await import("../components/server");
+    const server = new Server("test-auto-key-oci", {
+      provider: "oracle",
+      serverType: "VM.Standard.A1.Flex",
+      region: "Uocm:PHX-AD-1",
+      compartmentId: "ocid1.compartment.oc1..mock",
+      subnetId: "ocid1.subnet.oc1.phx.mock",
+      image: "ocid1.image.oc1.phx.mock",
+    });
+
+    const conn = await promiseOf(server.connection);
+    expect(conn.host).toBe("152.70.100.30");
+    expect(conn.user).toBe("root");
+    expect(conn.privateKey).toBeDefined();
+    expect(conn.privateKey).toContain("OPENSSH PRIVATE KEY");
+  });
+
+  it("does not include privateKey in connection when sshKeyId is provided", async () => {
+    const { Server } = await import("../components/server");
+    const server = new Server("test-explicit-key", {
+      provider: "hetzner",
+      serverType: "cx22",
+      region: "fsn1",
+      sshKeyId: "12345",
+    });
+
+    const conn = await promiseOf(server.connection);
+    expect(conn.host).toBe("203.0.113.10");
+    expect(conn.user).toBe("root");
+    expect(conn.privateKey).toBeUndefined();
   });
 });
 
@@ -275,7 +394,6 @@ describe("HostBootstrap component", () => {
     const { HostBootstrap } = await import("../components/bootstrap");
     const bootstrap = new HostBootstrap("test-bootstrap", {
       connection: { host: "1.2.3.4", user: "root" },
-      tailscaleAuthKey: "tskey-auth-test",
     });
 
     expect(bootstrap).toBeDefined();
@@ -287,28 +405,14 @@ describe("HostBootstrap component", () => {
     expect(dockerHost).toMatch(/^ssh:\/\/root@/);
   });
 
-  it("extracts tailscaleIP from last line of stdout", async () => {
-    const { HostBootstrap } = await import("../components/bootstrap");
-    const bootstrap = new HostBootstrap("test-bootstrap-ip", {
-      connection: { host: "1.2.3.4", user: "root" },
-      tailscaleAuthKey: "tskey-auth-test",
-    });
-
-    // Mock stdout is "mock-stdout" — the last-line extraction returns it as-is
-    const tsIP = await promiseOf(bootstrap.tailscaleIP);
-    expect(tsIP).toBe("mock-stdout");
-  });
-
-  it("derives dockerHost from tailscaleIP", async () => {
+  it("derives dockerHost from public IP", async () => {
     const { HostBootstrap } = await import("../components/bootstrap");
     const bootstrap = new HostBootstrap("test-bootstrap-host", {
       connection: { host: "1.2.3.4", user: "root" },
-      tailscaleAuthKey: "tskey-auth-test",
     });
 
-    const tsIP = await promiseOf(bootstrap.tailscaleIP);
     const dockerHost = await promiseOf(bootstrap.dockerHost);
-    expect(dockerHost).toBe(`ssh://root@${tsIP}`);
+    expect(dockerHost).toBe("ssh://root@1.2.3.4");
   });
 });
 
@@ -462,7 +566,7 @@ describe("Gateway component", () => {
     expect(tsUrl).toBe("");
   });
 
-  it("creates Tailscale serve command when tailscale is serve", async () => {
+  it("creates Tailscale serve via container when tailscale is serve", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw-serve", {
       dockerHost: "ssh://root@100.64.0.1",
@@ -475,6 +579,7 @@ describe("Gateway component", () => {
       tailscale: "serve",
       configSet: { "llm.model": "claude-3-opus" },
       auth: { mode: "token", token: "prod-token" },
+      tailscaleAuthKey: "tskey-auth-test",
     });
 
     // Mock stdout provides "mock-stdout", so tailscaleUrl will be "https://mock-stdout"
@@ -482,7 +587,7 @@ describe("Gateway component", () => {
     expect(tsUrl).toBe("https://mock-stdout");
   });
 
-  it("creates Tailscale funnel command when tailscale is funnel", async () => {
+  it("creates Tailscale funnel via container when tailscale is funnel", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw-funnel", {
       dockerHost: "ssh://root@100.64.0.1",
@@ -495,6 +600,7 @@ describe("Gateway component", () => {
       tailscale: "funnel",
       configSet: {},
       auth: { mode: "token", token: "funnel-token" },
+      tailscaleAuthKey: "tskey-auth-test",
     });
 
     const tsUrl = await promiseOf(gw.tailscaleUrl);
@@ -542,6 +648,52 @@ describe("Gateway component", () => {
     });
 
     expect(gw).toBeDefined();
+  });
+
+  it("constructs with setupCommands without errors", async () => {
+    const { Gateway } = await import("../components/gateway");
+    const gw = new Gateway("test-gw-setup", {
+      dockerHost: "ssh://root@100.64.0.1",
+      connection: { host: "100.64.0.1", user: "root" },
+      internalNetworkName: "openclaw-internal",
+      profile: "setuptest",
+      version: "latest",
+      packages: [],
+      port: 18789,
+      tailscale: "off",
+      configSet: {},
+      setupCommands: [
+        "models set claude-sonnet-4-5",
+        'onboard --auth-choice apiKey --token-provider openrouter --token "$OPENROUTER_API_KEY"',
+      ],
+      auth: { mode: "token", token: "test-token" },
+    });
+
+    const containerId = await promiseOf(gw.containerId);
+    expect(containerId).toBeDefined();
+  });
+
+  it("constructs with secretEnv without errors", async () => {
+    const { Gateway } = await import("../components/gateway");
+    const gw = new Gateway("test-gw-secret", {
+      dockerHost: "ssh://root@100.64.0.1",
+      connection: { host: "100.64.0.1", user: "root" },
+      internalNetworkName: "openclaw-internal",
+      profile: "secrettest",
+      version: "latest",
+      packages: [],
+      port: 18789,
+      tailscale: "off",
+      configSet: {},
+      setupCommands: [
+        'onboard --auth-choice apiKey --token "$OPENROUTER_API_KEY"',
+      ],
+      secretEnv: JSON.stringify({ OPENROUTER_API_KEY: "sk-or-test-123" }),
+      auth: { mode: "token", token: "test-token" },
+    });
+
+    const containerId = await promiseOf(gw.containerId);
+    expect(containerId).toBeDefined();
   });
 
   it("constructs with tcpPortMappings without errors", async () => {

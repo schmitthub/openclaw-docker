@@ -2,16 +2,18 @@
 #
 # Before running `pulumi up`, set required secrets:
 #   pulumi config set --secret tailscaleAuthKey <your-tailscale-auth-key>
-#   pulumi config set --secret gatewayToken-personal <token>
-#   pulumi config set --secret gatewayToken-automation <token>
 #
-# Generate tokens with: openssl rand -hex 32
+# Optional: set secret env vars for gateway setup commands and runtime:
+#   pulumi config set --secret gatewaySecretEnv-personal '{"OPENROUTER_API_KEY":"sk-or-..."}'
+#
+# Gateway auth tokens are auto-generated and stored in Pulumi state.
+# To override: pulumi config set --secret gatewayToken-<profile> <token>
 
 config:
   openclaw-deploy:provider: hetzner
   openclaw-deploy:serverType: cx22
   openclaw-deploy:region: fsn1
-  openclaw-deploy:sshKeyId: "12345"
+  # openclaw-deploy:sshKeyId: "12345"  # Optional: auto-generates ED25519 SSH key if omitted
   openclaw-deploy:egressPolicy:
     - dst: "api.anthropic.com"
       proto: tls
@@ -32,6 +34,9 @@ config:
       tailscale: serve
       configSet:
         gateway.controlUi.allowedOrigins: '["https://localhost"]'
+      setupCommands:
+        - 'models set claude-sonnet-4-5'
+        - 'onboard --non-interactive --accept-risk --auth-choice openrouter-api-key --openrouter-api-key "$OPENROUTER_API_KEY" --skip-channels --skip-skills --skip-daemon --skip-health'
     - profile: automation
       version: latest
       packages: []
