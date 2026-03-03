@@ -245,11 +245,24 @@ export class Gateway extends pulumi.ComponentResource {
       .output(args.secretEnv ?? "{}")
       .apply((s) => JSON.parse(s) as Record<string, string>);
 
+    // Filter out reserved env vars that are managed by this component.
+    // Docker uses the last value for duplicate keys, so user-provided
+    // secrets could silently override auth tokens or port mappings.
+    const RESERVED_ENV_KEYS = new Set([
+      "OPENCLAW_GATEWAY_TOKEN",
+      "TAILSCALE_AUTHKEY",
+      "TS_SOCKET",
+      "OPENCLAW_TCP_MAPPINGS",
+      "OPENCLAW_UDP_MAPPINGS",
+    ]);
+
     const computedEnvs = pulumi
       .all([pulumi.all(envs), secretEnvParsed])
       .apply(([baseEnvs, secrets]) => [
         ...baseEnvs,
-        ...Object.entries(secrets).map(([k, v]) => `${k}=${v}`),
+        ...Object.entries(secrets)
+          .filter(([k]) => !RESERVED_ENV_KEYS.has(k))
+          .map(([k, v]) => `${k}=${v}`),
       ]);
 
     // Build volumes list

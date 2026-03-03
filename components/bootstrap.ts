@@ -67,7 +67,7 @@ fi
 ssh-keygen -R ${hostIp} 2>/dev/null; true
 rm -f ~/.ssh/openclaw-deploy-${name}
 if [ -f ~/.ssh/config ]; then
-  sed -i '' '/# openclaw-deploy-${name}/,/^$/d' ~/.ssh/config 2>/dev/null; true
+  sed -i.bak '/# openclaw-deploy-${name}/,/^$/d' ~/.ssh/config 2>/dev/null && rm -f ~/.ssh/config.bak; true
 fi
 `,
         logging: "none",

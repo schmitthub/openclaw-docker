@@ -228,8 +228,8 @@ All domains below are hardcoded in `config/domains.ts` and always included. They
 
 **Tailscale (control plane + DERP relays — no wildcards):**
 
-- TLS: `tailscale.com`, `login.tailscale.com`, `controlplane.tailscale.com`, `log.tailscale.com`, `derp1–28.tailscale.com`
-- UDP (STUN port 3478): `derp1–28.tailscale.com`
+- TLS: `tailscale.com`, `login.tailscale.com`, `controlplane.tailscale.com`, `log.tailscale.com`, `derp1–12.tailscale.com`
+- UDP (STUN port 3478): `derp1–12.tailscale.com`
 
 User-defined `egressPolicy` rules are **additive** to all hardcoded domains. Duplicates are deduplicated by `mergeEgressPolicy()`.
 Domain filtering uses TLS SNI inspection for TLS traffic and per-destination Envoy UDP proxy listeners for UDP traffic.

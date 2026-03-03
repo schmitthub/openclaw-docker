@@ -56,7 +56,6 @@ mkdir -p "$OPENCLAW_WORKSPACE_DIR"
 
 echo "==> Config dir:  $OPENCLAW_CONFIG_DIR"
 echo "==> Workspace:   $OPENCLAW_WORKSPACE_DIR"
-echo "==> Gateway token: $OPENCLAW_GATEWAY_TOKEN"
 echo ""
 
 # Fix permissions (same as upstream docker-setup.sh)
@@ -143,7 +142,6 @@ docker compose "${COMPOSE_ARGS[@]}" up -d
 
 echo ""
 echo "Gateway running with Tailscale Serve on port $OPENCLAW_GATEWAY_PORT"
-echo "Token: $OPENCLAW_GATEWAY_TOKEN". ## Remove printing from pulumi, we don't need the token printed in logs anymore
 echo ""
 echo "Commands:"
 echo "  cd $ROOT_DIR"
