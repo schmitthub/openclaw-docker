@@ -224,7 +224,13 @@ export class Gateway extends pulumi.ComponentResource {
     for (let i = 0; i < setupCmds.length; i++) {
       const cmd = setupCmds[i];
       const words = cmd.replace(/^openclaw\s+/, "").split(/\s+/);
-      const slug = words.slice(0, 2).join("-");
+      const slug = words
+        .slice(0, 2)
+        .join("-")
+        .replace(/[^a-zA-Z0-9_-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 20);
       const encoded = Buffer.from(cmd).toString("base64");
 
       const setupResource = new command.remote.Command(
