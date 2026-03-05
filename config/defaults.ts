@@ -1,15 +1,8 @@
-// Docker network constants
-export const INTERNAL_NETWORK_SUBNET = "172.28.0.0/24";
-export const ENVOY_STATIC_IP = "172.28.0.2";
-export const INTERNAL_NETWORK_NAME = "openclaw-internal";
-export const EGRESS_NETWORK_NAME = "openclaw-egress";
-
 // Envoy
 export const ENVOY_IMAGE = "envoyproxy/envoy:v1.33-latest";
 export const ENVOY_EGRESS_PORT = 10000;
 export const ENVOY_TCP_PORT_BASE = 10001;
-export const ENVOY_UDP_PORT_BASE = 10100;
-export const ENVOY_DNS_PORT = 53;
+export const ENVOY_UID = 101;
 export const CLOUDFLARE_DNS_PRIMARY = "1.1.1.2";
 export const CLOUDFLARE_DNS_SECONDARY = "1.0.0.2";
 export const ENVOY_CONFIG_HOST_DIR = "/opt/openclaw-deploy/envoy";
@@ -28,19 +21,17 @@ export const DEFAULT_OPENCLAW_WORKSPACE_DIR = "/home/node/.openclaw/workspace";
 export const DOCKER_BASE_IMAGE = "node:22-bookworm";
 export const NODE_COMPILE_CACHE_DIR = "/home/node/.node-compile-cache";
 
-// Web tools (always installed and started)
-export const TTYD_PORT = 7681;
-export const FILEBROWSER_PORT = 8080;
+// SSH access (replaces ttyd/filebrowser web tools)
+export const SSHD_PORT = 2222;
 
 // Core apt packages (always installed)
 export const CORE_APT_PACKAGES = [
-  "iptables",
-  "iproute2",
   "gosu",
   "libsecret-tools",
   "build-essential", // Homebrew requirement (compiling from source when bottles unavailable)
   "ripgrep",
   "jq",
+  "openssh-server",
 ];
 
 // Tailscale Funnel allowed ports
@@ -49,9 +40,10 @@ export const TAILSCALE_FUNNEL_PORTS = [443, 8443, 10000];
 // Supported VPS providers
 export const PROVIDERS = ["hetzner", "digitalocean", "oracle"] as const;
 
-// Tailscale (runs inside gateway containers)
+// Tailscale sidecar
+export const TAILSCALE_IMAGE = "tailscale/tailscale:v1.94.2";
 export const TAILSCALE_STATE_DIR = "/var/lib/tailscale";
-export const TAILSCALE_SOCKET_PATH = "/var/run/tailscale/tailscaled.sock";
+export const TAILSCALE_HEALTH_PORT = 9002;
 
 // Oracle Cloud (OCI) defaults
 export const OCI_ARM_SHAPE_PREFIX = "VM.Standard.A1";

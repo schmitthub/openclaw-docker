@@ -5,16 +5,24 @@ import * as crypto from "crypto";
 import {
   DEFAULT_OPENCLAW_CONFIG_DIR,
   DEFAULT_OPENCLAW_WORKSPACE_DIR,
-  ENVOY_STATIC_IP,
   ENVOY_CA_CERT_PATH,
+  ENVOY_IMAGE,
+  ENVOY_UID,
+  TAILSCALE_IMAGE,
   TAILSCALE_STATE_DIR,
-  TAILSCALE_SOCKET_PATH,
+  TAILSCALE_HEALTH_PORT,
+  CLOUDFLARE_DNS_PRIMARY,
+  CLOUDFLARE_DNS_SECONDARY,
+  ENVOY_MITM_CERTS_HOST_DIR,
+  ENVOY_MITM_CERTS_CONTAINER_DIR,
+  SSHD_PORT,
 } from "../config";
 import {
   renderDockerfile,
   renderEntrypoint,
+  renderSidecarEntrypoint,
+  renderServeConfig,
   TcpPortMapping,
-  UdpPortMapping,
 } from "../templates";
 import type { ImageStep } from "../config/types";
 
@@ -23,8 +31,6 @@ export interface GatewayArgs {
   dockerHost: pulumi.Input<string>;
   /** SSH connection args for remote commands */
   connection: pulumi.Input<command.types.input.remote.ConnectionArgs>;
-  /** Internal network name (from EnvoyEgress) — gateway attaches here */
-  internalNetworkName: pulumi.Input<string>;
   /** Unique name for this gateway instance */
   profile: string;
   /** OpenClaw version to install (npm dist-tag or semver) */
@@ -45,10 +51,14 @@ export interface GatewayArgs {
   auth: { mode: "token"; token: pulumi.Input<string> };
   /** Per-rule port mappings for SSH/TCP egress (from EnvoyEgress) */
   tcpPortMappings?: TcpPortMapping[];
-  /** Per-rule port mappings for UDP egress (from EnvoyEgress) */
-  udpPortMappings?: UdpPortMapping[];
   /** Secret: Tailscale auth key (always required) */
   tailscaleAuthKey: pulumi.Input<string>;
+  /** Host path to the envoy.yaml config file (from EnvoyEgress) */
+  envoyConfigPath: pulumi.Input<string>;
+  /** SHA256 hash of envoy.yaml (triggers envoy container replacement) */
+  envoyConfigHash: string;
+  /** Domains with MITM TLS inspection enabled (from EnvoyEgress) */
+  inspectedDomains: string[];
 }
 
 export class Gateway extends pulumi.ComponentResource {
@@ -74,6 +84,8 @@ export class Gateway extends pulumi.ComponentResource {
       imageSteps: args.imageSteps,
     });
     const entrypoint = renderEntrypoint();
+    const sidecarEntrypoint = renderSidecarEntrypoint();
+    const serveConfig = renderServeConfig(args.port, SSHD_PORT);
 
     // Docker provider connected to the remote host
     const dockerProvider = new docker.Provider(
@@ -82,10 +94,11 @@ export class Gateway extends pulumi.ComponentResource {
       { parent: this },
     );
 
-    // Step 1: Upload Dockerfile + entrypoint.sh to server via remote command.
-    // Uses base64 encoding to safely transfer content without heredoc issues.
+    // Step 1: Upload Dockerfile + entrypoint.sh + sidecar-entrypoint.sh + serve-config.json to server.
     const encodedDockerfile = Buffer.from(dockerfile).toString("base64");
     const encodedEntrypoint = Buffer.from(entrypoint).toString("base64");
+    const encodedSidecar = Buffer.from(sidecarEntrypoint).toString("base64");
+    const encodedServeConfig = Buffer.from(serveConfig).toString("base64");
     const uploadBuildContext = new command.remote.Command(
       `${name}-upload-build`,
       {
@@ -94,18 +107,16 @@ export class Gateway extends pulumi.ComponentResource {
           `mkdir -p ${buildDir}`,
           `echo '${encodedDockerfile}' | base64 -d > ${buildDir}/Dockerfile`,
           `echo '${encodedEntrypoint}' | base64 -d > ${buildDir}/entrypoint.sh`,
-          `chmod 755 ${buildDir}/entrypoint.sh`,
+          `echo '${encodedSidecar}' | base64 -d > ${buildDir}/sidecar-entrypoint.sh`,
+          `echo '${encodedServeConfig}' | base64 -d > ${buildDir}/serve-config.json`,
+          `chmod 755 ${buildDir}/entrypoint.sh ${buildDir}/sidecar-entrypoint.sh`,
         ].join(" && "),
         delete: `rm -rf ${buildDir}`,
       },
       { parent: this },
     );
 
-    // Step 2: Build Docker image on the remote host via docker build command.
-    // Cannot use docker.Image because it validates the Dockerfile path locally
-    // during preview, but the build context only exists on the remote host.
-    // Content hash in the --label forces Pulumi to re-run when Dockerfile or
-    // entrypoint.sh content changes (Pulumi only diffs the command string).
+    // Step 2: Build Docker image on the remote host.
     const imageName = `openclaw-gateway-${args.profile}:${args.version}`;
     const buildContextHash = crypto
       .createHash("sha256")
@@ -137,8 +148,7 @@ export class Gateway extends pulumi.ComponentResource {
       { parent: this },
     );
 
-    // Named Docker volumes for home and linuxbrew — auto-populated from the
-    // image on first use, persist across container recreations. No seed step needed.
+    // Named Docker volumes for home and linuxbrew
     const homeVolume = new docker.Volume(
       `${name}-home`,
       { name: `openclaw-home-${args.profile}` },
@@ -151,9 +161,9 @@ export class Gateway extends pulumi.ComponentResource {
     );
 
     // Step 4: Write config to shared volume via ephemeral CLI container.
-    // Runs BEFORE the gateway container starts — avoids crash-loop from missing config.
-    // Uses --network none (pure file I/O) and --user node (no root-owned files).
     const containerName = `openclaw-gateway-${args.profile}`;
+    const sidecarName = `tailscale-${args.profile}`;
+    const envoyName = `envoy-${args.profile}`;
 
     // Init container runs user setupCommands only (prefixed with `openclaw `)
     const setupCmds = (args.setupCommands ?? [])
@@ -169,12 +179,9 @@ export class Gateway extends pulumi.ComponentResource {
       })
       .map((cmd) => `openclaw ${cmd}`);
 
-    // Joined script used for content hashing on the container label (openclaw.init-hash).
-    // When any setup command changes, the hash changes, forcing container replacement.
     const initScript = setupCmds.join("\n");
 
-    // Step 4a: Write secret env file to host (separate command so secrets
-    // don't appear in the init container command string on error).
+    // Step 4a: Write secret env file to host
     const envFile = `${dataDir}/.init-env`;
     const writeSecretEnv = new command.remote.Command(
       `${name}-write-secret-env`,
@@ -196,7 +203,6 @@ export class Gateway extends pulumi.ComponentResource {
                 { cause: e },
               );
             }
-            // Include gateway token so setupCommands can reference $OPENCLAW_GATEWAY_TOKEN
             secrets["OPENCLAW_GATEWAY_TOKEN"] = token;
             const entries = Object.entries(secrets);
             const printfs = entries
@@ -217,8 +223,6 @@ export class Gateway extends pulumi.ComponentResource {
     );
 
     // Step 4b: Run each setup command as an individual Pulumi resource.
-    // Pulumi tracks each command independently — re-runs when any input
-    // changes (command content, connection, image name, etc.).
     const setupResources: command.remote.Command[] = [];
 
     for (let i = 0; i < setupCmds.length; i++) {
@@ -261,42 +265,188 @@ export class Gateway extends pulumi.ComponentResource {
         ? setupResources[setupResources.length - 1]
         : writeSecretEnv;
 
-    // Step 5: Create the gateway container
+    // Step 5: Create the per-gateway bridge network.
+    // NOT internal: true — the sidecar needs internet access for Envoy to reach upstreams.
+    // All three containers (sidecar, envoy, gateway) share the sidecar's network namespace.
+    const bridgeNetwork = new docker.Network(
+      `${name}-network`,
+      {
+        name: `openclaw-net-${args.profile}`,
+        driver: "bridge",
+      },
+      { parent: this, provider: dockerProvider },
+    );
+
+    // Step 6a: Create the Tailscale sidecar container.
+    // The sidecar owns the network namespace. Envoy and gateway share it via network_mode.
+    // Uses containerboot (official Tailscale entrypoint) with sidecar-entrypoint.sh as wrapper.
+
+    // Build sidecar env vars
+    const sidecarEnvs: pulumi.Input<string>[] = [
+      `TS_STATE_DIR=${TAILSCALE_STATE_DIR}`,
+      `TS_USERSPACE=false`,
+      `TS_SERVE_CONFIG=/config/serve-config.json`,
+      `TS_ENABLE_HEALTH_CHECK=true`,
+      `ENVOY_UID=${ENVOY_UID}`,
+    ];
+    sidecarEnvs.push(pulumi.interpolate`TS_AUTHKEY=${args.tailscaleAuthKey}`);
+    if (args.tcpPortMappings && args.tcpPortMappings.length > 0) {
+      sidecarEnvs.push(
+        `OPENCLAW_TCP_MAPPINGS=${args.tcpPortMappings.map((m) => `${m.dst}|${m.dstPort}|${m.envoyPort}`).join(";")}`,
+      );
+    }
+
+    // Content hash for sidecar — forces replacement when sidecar entrypoint changes
+    const sidecarHash = crypto
+      .createHash("sha256")
+      .update(sidecarEntrypoint)
+      .digest("hex")
+      .slice(0, 12);
+
+    const sidecarContainer = new docker.Container(
+      `${name}-sidecar`,
+      {
+        name: sidecarName,
+        image: TAILSCALE_IMAGE,
+        restart: "unless-stopped",
+        hostname: args.profile,
+        capabilities: { adds: ["NET_ADMIN"] },
+        devices: [
+          {
+            hostPath: "/dev/net/tun",
+            containerPath: "/dev/net/tun",
+          },
+        ],
+        dns: [CLOUDFLARE_DNS_PRIMARY, CLOUDFLARE_DNS_SECONDARY],
+        envs: pulumi.all(sidecarEnvs),
+        entrypoints: [`${buildDir}/sidecar-entrypoint.sh`],
+        healthcheck: {
+          tests: [
+            "CMD",
+            "wget",
+            "-q",
+            "--spider",
+            `http://127.0.0.1:${TAILSCALE_HEALTH_PORT}/healthz`,
+          ],
+          interval: "10s",
+          timeout: "5s",
+          retries: 5,
+          startPeriod: "30s",
+        },
+        volumes: [
+          {
+            hostPath: `${buildDir}/sidecar-entrypoint.sh`,
+            containerPath: `${buildDir}/sidecar-entrypoint.sh`,
+            readOnly: true,
+          },
+          {
+            hostPath: `${dataDir}/tailscale`,
+            containerPath: TAILSCALE_STATE_DIR,
+          },
+          {
+            hostPath: `${buildDir}/serve-config.json`,
+            containerPath: "/config/serve-config.json",
+            readOnly: true,
+          },
+        ],
+        networksAdvanced: [{ name: bridgeNetwork.name }],
+        labels: [{ label: "openclaw.sidecar-hash", value: sidecarHash }],
+      },
+      {
+        parent: this,
+        provider: dockerProvider,
+        dependsOn: [lastSetupDep, uploadBuildContext, bridgeNetwork],
+        additionalSecretOutputs: ["envs"],
+      },
+    );
+
+    // Step 6b: Wait for sidecar to be healthy before creating envoy + gateway containers.
+    const sidecarHealthy = new command.remote.Command(
+      `${name}-sidecar-healthy`,
+      {
+        connection: args.connection,
+        create: pulumi.interpolate`for i in $(seq 1 60); do if [ "$(docker inspect --format='{{.State.Health.Status}}' ${sidecarName} 2>/dev/null)" = "healthy" ]; then exit 0; fi; sleep 2; done; echo "ERROR: Tailscale sidecar did not become healthy within 120s" >&2; exit 1`,
+        triggers: [sidecarContainer.id],
+      },
+      { parent: this, dependsOn: [sidecarContainer] },
+    );
+
+    // Step 7: Create Envoy container (shares sidecar's network namespace).
+    const envoyVolumes: docker.types.input.ContainerVolume[] = [
+      {
+        hostPath: pulumi.output(args.envoyConfigPath).apply((p) => p),
+        containerPath: "/etc/envoy/envoy.yaml",
+        readOnly: true,
+      },
+      {
+        hostPath: ENVOY_CA_CERT_PATH,
+        containerPath: "/etc/envoy/ca-cert.pem",
+        readOnly: true,
+      },
+    ];
+    if (args.inspectedDomains.length > 0) {
+      envoyVolumes.push({
+        hostPath: ENVOY_MITM_CERTS_HOST_DIR,
+        containerPath: ENVOY_MITM_CERTS_CONTAINER_DIR,
+        readOnly: true,
+      });
+    }
+
+    const envoyContainer = new docker.Container(
+      `${name}-envoy`,
+      {
+        name: envoyName,
+        image: ENVOY_IMAGE,
+        restart: "unless-stopped",
+        networkMode: `container:${sidecarName}`,
+        envs: [`ENVOY_UID=${ENVOY_UID}`],
+        healthcheck: {
+          tests: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/10000"],
+          interval: "5s",
+          timeout: "3s",
+          retries: 5,
+          startPeriod: "5s",
+        },
+        volumes: envoyVolumes,
+        labels: [
+          { label: "openclaw.config-hash", value: args.envoyConfigHash },
+        ],
+      },
+      {
+        parent: this,
+        provider: dockerProvider,
+        dependsOn: [sidecarHealthy],
+      },
+    );
+
+    // Step 7b: Wait for Envoy to pass healthcheck.
+    const envoyHealthy = new command.remote.Command(
+      `${name}-envoy-healthy`,
+      {
+        connection: args.connection,
+        create: pulumi.interpolate`for i in $(seq 1 30); do if [ "$(docker inspect --format='{{.State.Health.Status}}' ${envoyName} 2>/dev/null)" = "healthy" ]; then exit 0; fi; sleep 2; done; echo "ERROR: Envoy did not become healthy within 60s" >&2; exit 1`,
+        triggers: [envoyContainer.id],
+      },
+      { parent: this, dependsOn: [envoyContainer] },
+    );
+
+    // Step 8: Create the gateway container (shares sidecar's network namespace)
 
     // Build env vars list
     const envs: pulumi.Input<string>[] = [
       `HOME=/home/node`,
       `TERM=xterm-256color`,
-      // Always set so the gateway trusts MITM-issued certs (harmless when no inspect rules exist)
       `NODE_EXTRA_CA_CERTS=${ENVOY_CA_CERT_PATH}`,
     ];
 
-    // Auth token via env var (takes precedence over config file in local mode)
+    // Auth token via env var
     envs.push(pulumi.interpolate`OPENCLAW_GATEWAY_TOKEN=${args.auth.token}`);
-
-    if (args.tcpPortMappings && args.tcpPortMappings.length > 0) {
-      envs.push(
-        `OPENCLAW_TCP_MAPPINGS=${args.tcpPortMappings.map((m) => `${m.dst}|${m.dstPort}|${m.envoyPort}`).join(";")}`,
-      );
-    }
-
-    if (args.udpPortMappings && args.udpPortMappings.length > 0) {
-      envs.push(
-        `OPENCLAW_UDP_MAPPINGS=${args.udpPortMappings.map((m) => `${m.dst}|${m.dstPort}|${m.envoyPort}`).join(";")}`,
-      );
-    }
-
-    // Tailscale env vars (always enabled)
-    envs.push(`TS_SOCKET=${TAILSCALE_SOCKET_PATH}`);
-    envs.push(pulumi.interpolate`TAILSCALE_AUTHKEY=${args.tailscaleAuthKey}`);
 
     for (const [k, v] of Object.entries(args.env ?? {})) {
       envs.push(`${k}=${v}`);
     }
 
     // Merge secret env vars into the container's envs.
-    // secretEnv is a Pulumi secret, so we resolve both base envs and parsed
-    // secrets into a single Output<string[]> for the container's envs field.
     const secretEnvParsed = pulumi.output(args.secretEnv ?? "{}").apply((s) => {
       try {
         return JSON.parse(s) as Record<string, string>;
@@ -310,23 +460,19 @@ export class Gateway extends pulumi.ComponentResource {
     });
 
     // Filter out reserved env vars that are managed by this component.
-    // Docker uses the last value for duplicate keys, so user-provided
-    // secrets could silently override auth tokens or port mappings.
     const RESERVED_ENV_KEYS = new Set([
       "OPENCLAW_GATEWAY_TOKEN",
-      "TAILSCALE_AUTHKEY",
+      "TS_AUTHKEY",
       "TS_SOCKET",
       "OPENCLAW_TCP_MAPPINGS",
-      "OPENCLAW_UDP_MAPPINGS",
     ]);
 
-    // Warn at plan time if secretEnv contains reserved keys that will be silently filtered.
+    // Warn at plan time if secretEnv contains reserved keys.
     pulumi.output(args.secretEnv ?? "{}").apply((s) => {
       let parsed: Record<string, string>;
       try {
         parsed = JSON.parse(s) as Record<string, string>;
       } catch {
-        // JSON parse error is handled by secretEnvParsed above
         return;
       }
       const conflicts = Object.keys(parsed).filter((k) =>
@@ -349,7 +495,7 @@ export class Gateway extends pulumi.ComponentResource {
           .map(([k, v]) => `${k}=${v}`),
       ]);
 
-    // Build volumes list — named volumes first, then bind mount overlays on top
+    // Build volumes list
     const volumes: docker.types.input.ContainerVolume[] = [
       {
         volumeName: homeVolume.name,
@@ -372,19 +518,12 @@ export class Gateway extends pulumi.ComponentResource {
         containerPath: ENVOY_CA_CERT_PATH,
         readOnly: true,
       },
-      {
-        hostPath: `${dataDir}/tailscale`,
-        containerPath: TAILSCALE_STATE_DIR,
-      },
     ];
 
-    // Container command overrides Dockerfile CMD — only --port is passed here.
-    // --bind and --tailscale are omitted because onboard setupCommands configure those
-    // in openclaw.json (gateway.bind, gateway.tailscale). CLI flags would conflict.
+    // Container command overrides Dockerfile CMD
     const containerCommand = ["openclaw", "gateway", "--port", `${args.port}`];
 
     // Content hash of init script + Dockerfile — forces container replacement
-    // when setupCommands or image content changes (Pulumi only detects input diffs).
     const contentHash = crypto
       .createHash("sha256")
       .update(initScript)
@@ -399,13 +538,15 @@ export class Gateway extends pulumi.ComponentResource {
         image: imageName,
         restart: "unless-stopped",
         init: true,
-        capabilities: { adds: ["NET_ADMIN"] },
+        // No CAP_NET_ADMIN needed — sidecar handles all networking
+        networkMode: `container:${sidecarName}`,
+        // No networksAdvanced — mutually exclusive with networkMode
+        // No dns — inherited from sidecar's netns
         sysctls: {
           "net.ipv4.tcp_keepalive_time": "60",
           "net.ipv4.tcp_keepalive_intvl": "10",
           "net.ipv4.tcp_keepalive_probes": "3",
         },
-        dns: [ENVOY_STATIC_IP],
         envs: computedEnvs,
         command: containerCommand,
         healthcheck: {
@@ -421,35 +562,32 @@ export class Gateway extends pulumi.ComponentResource {
           startPeriod: "20s",
         },
         volumes,
-        networksAdvanced: [{ name: args.internalNetworkName }],
         labels: [{ label: "openclaw.init-hash", value: contentHash }],
       },
       {
         parent: this,
         provider: dockerProvider,
-        dependsOn: [lastSetupDep],
+        dependsOn: [envoyHealthy, lastSetupDep],
         additionalSecretOutputs: ["envs"],
       },
     );
 
-    // Step 6: Query Tailscale hostname from inside the container
+    // Step 9: Query Tailscale hostname from the sidecar container
     const tailscaleHostname = new command.remote.Command(
       `${name}-tailscale-url`,
       {
         connection: args.connection,
         create: [
-          // Wait for Tailscale to authenticate inside the container (up to 120s)
-          `TS_READY=false; for i in $(seq 1 60); do docker exec ${containerName} tailscale --socket=/var/run/tailscale/tailscaled.sock status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null 2>&1 && TS_READY=true && break; sleep 2; done`,
+          // Wait for Tailscale to authenticate (up to 120s)
+          `TS_READY=false; for i in $(seq 1 60); do docker exec ${sidecarName} tailscale status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null 2>&1 && TS_READY=true && break; sleep 2; done`,
           `if [ "$TS_READY" != "true" ]; then echo "ERROR: Tailscale did not reach Running state in 120s" >&2; exit 1; fi`,
-          // Extract DNSName via jq (installed on host by bootstrap)
-          `docker exec ${containerName} tailscale --socket=/var/run/tailscale/tailscaled.sock status --json | jq -r '.Self.DNSName' | sed 's/\\.$//'`,
+          `docker exec ${sidecarName} tailscale status --json | jq -r '.Self.DNSName' | sed 's/\\.$//'`,
         ].join(" && "),
-        // Re-run when the container is replaced (new container ID = new Tailscale identity)
-        triggers: [container.id],
+        triggers: [sidecarContainer.id],
       },
       {
         parent: this,
-        dependsOn: [container],
+        dependsOn: [sidecarContainer, container],
       },
     );
 

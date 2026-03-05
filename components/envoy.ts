@@ -1,56 +1,37 @@
 import * as crypto from "crypto";
 import * as pulumi from "@pulumi/pulumi";
-import * as docker from "@pulumi/docker";
 import * as command from "@pulumi/command";
 import {
   EgressRule,
-  ENVOY_IMAGE,
-  ENVOY_STATIC_IP,
-  INTERNAL_NETWORK_SUBNET,
-  INTERNAL_NETWORK_NAME,
-  EGRESS_NETWORK_NAME,
   ENVOY_CONFIG_HOST_DIR,
   ENVOY_CA_CERT_PATH,
   ENVOY_CA_KEY_PATH,
   ENVOY_MITM_CERTS_HOST_DIR,
-  ENVOY_MITM_CERTS_CONTAINER_DIR,
 } from "../config";
-import {
-  renderEnvoyConfig,
-  TcpPortMapping,
-  UdpPortMapping,
-} from "../templates";
+import { renderEnvoyConfig, TcpPortMapping } from "../templates";
 
 export interface EnvoyEgressArgs {
-  /** Docker host URI, e.g. "ssh://root@<ip>" */
-  dockerHost: pulumi.Input<string>;
   /** SSH connection args for remote commands (writing config files to host) */
   connection: pulumi.Input<command.types.input.remote.ConnectionArgs>;
   /** Egress policy rules (merged with hardcoded infrastructure domains) */
   egressPolicy: EgressRule[];
 }
 
+/**
+ * EnvoyEgress renders the Envoy config and manages certificates on the remote host.
+ *
+ * In the reference architecture, Envoy runs as a per-gateway container (created by Gateway),
+ * not as a shared singleton. This component only handles config rendering and cert generation.
+ */
 export class EnvoyEgress extends pulumi.ComponentResource {
-  /** Static IP of the Envoy container on the internal network */
-  public readonly envoyIP: pulumi.Output<string>;
-  /** Internal network ID (internal: true, gateway containers attach here) */
-  public readonly internalNetworkId: pulumi.Output<string>;
-  /** Internal network name */
-  public readonly internalNetworkName: pulumi.Output<string>;
-  /** Egress network ID (Envoy attaches here for internet access) */
-  public readonly egressNetworkId: pulumi.Output<string>;
-  /** Egress network name */
-  public readonly egressNetworkName: pulumi.Output<string>;
-  /** Envoy container ID */
-  public readonly containerId: pulumi.Output<string>;
+  /** Host path to the uploaded envoy.yaml */
+  public readonly envoyConfigPath: pulumi.Output<string>;
   /** Host path to the CA certificate (for gateway NODE_EXTRA_CA_CERTS) */
   public readonly caCertPath: pulumi.Output<string>;
   /** Domains with MITM TLS inspection enabled (need per-domain certs) */
   public readonly inspectedDomains: string[];
   /** Per-rule port mappings for SSH/TCP egress (passed to gateway containers) */
   public readonly tcpPortMappings: TcpPortMapping[];
-  /** Per-rule port mappings for UDP egress (passed to gateway containers) */
-  public readonly udpPortMappings: UdpPortMapping[];
   /** Warnings from egress policy rendering (e.g. unsupported rule types) */
   public readonly warnings: string[];
   /** SHA256 hash (12 chars) of rendered envoy.yaml — triggers container replacement on config change */
@@ -67,7 +48,6 @@ export class EnvoyEgress extends pulumi.ComponentResource {
     const envoyConfig = renderEnvoyConfig(args.egressPolicy);
     this.inspectedDomains = envoyConfig.inspectedDomains;
     this.tcpPortMappings = envoyConfig.tcpPortMappings;
-    this.udpPortMappings = envoyConfig.udpPortMappings;
     this.warnings = envoyConfig.warnings;
     this.configHash = crypto
       .createHash("sha256")
@@ -75,41 +55,12 @@ export class EnvoyEgress extends pulumi.ComponentResource {
       .digest("hex")
       .slice(0, 12);
 
-    // Docker provider connected to the remote host
-    const dockerProvider = new docker.Provider(
-      `${name}-docker`,
-      { host: args.dockerHost },
-      { parent: this },
-    );
-
-    // Step 1: Create the internal network (internal: true — no default route)
-    const internalNetwork = new docker.Network(
-      `${name}-internal`,
-      {
-        name: INTERNAL_NETWORK_NAME,
-        internal: true,
-        driver: "bridge",
-        ipamConfigs: [{ subnet: INTERNAL_NETWORK_SUBNET }],
-      },
-      { parent: this, provider: dockerProvider },
-    );
-
-    // Step 2: Create the egress network (Envoy + CLI containers)
-    const egressNetwork = new docker.Network(
-      `${name}-egress`,
-      {
-        name: EGRESS_NETWORK_NAME,
-        driver: "bridge",
-      },
-      { parent: this, provider: dockerProvider },
-    );
-
-    // Step 3: Write envoy.yaml to host via remote command.
+    // Step 1: Write envoy.yaml to host via remote command.
     // Uses base64 encoding to safely transfer content without heredoc
     // injection risks from user-provided domain strings in the egress policy.
     const configPath = `${ENVOY_CONFIG_HOST_DIR}/envoy.yaml`;
     const encodedConfig = Buffer.from(envoyConfig.yaml).toString("base64");
-    const writeEnvoyConfig = new command.remote.Command(
+    new command.remote.Command(
       `${name}-write-config`,
       {
         connection: args.connection,
@@ -119,9 +70,9 @@ export class EnvoyEgress extends pulumi.ComponentResource {
       { parent: this },
     );
 
-    // Step 4: Generate CA certificate for MITM TLS inspection (idempotent).
+    // Step 2: Generate CA certificate for MITM TLS inspection (idempotent).
     // Only generates if cert doesn't already exist. Used to sign per-domain
-    // certs (Step 4b) and trusted by gateway containers via NODE_EXTRA_CA_CERTS.
+    // certs (Step 2b) and trusted by gateway containers via NODE_EXTRA_CA_CERTS.
     const generateCA = new command.remote.Command(
       `${name}-generate-ca`,
       {
@@ -135,10 +86,7 @@ export class EnvoyEgress extends pulumi.ComponentResource {
       { parent: this },
     );
 
-    // Step 4b: Generate per-domain certificates for MITM inspection (idempotent).
-    // Each inspected domain gets a cert signed by the CA. Uses temp files for the
-    // SAN extension and CSR to avoid process substitution (portability).
-    const domainCertCommands: command.remote.Command[] = [];
+    // Step 2b: Generate per-domain certificates for MITM inspection (idempotent).
     const HOSTNAME_RE =
       /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
     for (const domain of envoyConfig.inspectedDomains) {
@@ -149,7 +97,7 @@ export class EnvoyEgress extends pulumi.ComponentResource {
       const certPath = `${ENVOY_MITM_CERTS_HOST_DIR}/${domain}-cert.pem`;
       const keyPath = `${ENVOY_MITM_CERTS_HOST_DIR}/${domain}-key.pem`;
 
-      const genCert = new command.remote.Command(
+      new command.remote.Command(
         `${name}-cert-${safeName}`,
         {
           connection: args.connection,
@@ -171,104 +119,18 @@ export class EnvoyEgress extends pulumi.ComponentResource {
         },
         { parent: this, dependsOn: [generateCA] },
       );
-      domainCertCommands.push(genCert);
     }
 
-    // Step 5: Create the Envoy container
-    const envoyContainer = new docker.Container(
-      `${name}-envoy`,
-      {
-        name: "envoy",
-        image: ENVOY_IMAGE,
-        restart: "unless-stopped",
-        // Envoy runs as non-root 'envoy' user — allow binding to port 53
-        sysctls: { "net.ipv4.ip_unprivileged_port_start": "53" },
-        healthcheck: {
-          tests: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/10000"],
-          interval: "5s",
-          timeout: "3s",
-          retries: 5,
-          startPeriod: "5s",
-        },
-        networksAdvanced: [
-          {
-            name: internalNetwork.name,
-            ipv4Address: ENVOY_STATIC_IP,
-          },
-          {
-            name: egressNetwork.name,
-          },
-        ],
-        labels: [{ label: "openclaw.config-hash", value: this.configHash }],
-        volumes: [
-          {
-            hostPath: configPath,
-            containerPath: "/etc/envoy/envoy.yaml",
-            readOnly: true,
-          },
-          {
-            hostPath: ENVOY_CA_CERT_PATH,
-            containerPath: "/etc/envoy/ca-cert.pem",
-            readOnly: true,
-          },
-          ...(envoyConfig.inspectedDomains.length > 0
-            ? [
-                {
-                  hostPath: ENVOY_MITM_CERTS_HOST_DIR,
-                  containerPath: ENVOY_MITM_CERTS_CONTAINER_DIR,
-                  readOnly: true,
-                },
-              ]
-            : []),
-        ],
-      },
-      {
-        parent: this,
-        provider: dockerProvider,
-        dependsOn: [
-          writeEnvoyConfig,
-          generateCA,
-          ...domainCertCommands,
-          internalNetwork,
-          egressNetwork,
-        ],
-      },
-    );
-
-    // Step 6: Wait for Envoy to pass Docker healthcheck before gateways start.
-    // Gateway containers depend on EnvoyEgress (parent component), so Pulumi
-    // won't create them until all child resources — including this command — complete.
-    new command.remote.Command(
-      `${name}-healthy`,
-      {
-        connection: args.connection,
-        create: pulumi.interpolate`for i in $(seq 1 30); do if [ "$(docker inspect --format='{{.State.Health.Status}}' envoy 2>/dev/null)" = "healthy" ]; then exit 0; fi; sleep 2; done; echo "ERROR: Envoy did not become healthy within 60s" >&2; exit 1`,
-        triggers: [envoyContainer.id],
-      },
-      { parent: this, dependsOn: [envoyContainer] },
-    );
-
     // Outputs
-    this.envoyIP = pulumi.output(ENVOY_STATIC_IP);
-    this.internalNetworkId = internalNetwork.id;
-    this.internalNetworkName = internalNetwork.name;
-    this.egressNetworkId = egressNetwork.id;
-    this.egressNetworkName = egressNetwork.name;
-    this.containerId = envoyContainer.id;
+    this.envoyConfigPath = pulumi.output(configPath);
     this.caCertPath = pulumi.output(ENVOY_CA_CERT_PATH);
 
     this.registerOutputs({
-      envoyIP: this.envoyIP,
-      internalNetworkId: this.internalNetworkId,
-      internalNetworkName: this.internalNetworkName,
-      egressNetworkId: this.egressNetworkId,
-      egressNetworkName: this.egressNetworkName,
-      containerId: this.containerId,
+      envoyConfigPath: this.envoyConfigPath,
       caCertPath: this.caCertPath,
       configHash: this.configHash,
       inspectedDomains: this.inspectedDomains,
       tcpPortMappings: this.tcpPortMappings,
-      udpPortMappings: this.udpPortMappings,
       warnings: this.warnings,
     });
   }

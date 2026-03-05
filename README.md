@@ -35,82 +35,85 @@ Pulumi TypeScript IaC that provisions remote VPS hosts and deploys [OpenClaw](ht
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Remote VPS (Hetzner / DigitalOcean / Oracle Cloud)                 │
-│                                                                     │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  openclaw-internal network (internal: true, 172.28.0.0/24)  │   │
-│   │  No default route to internet                               │   │
-│   │                                                             │   │
-│   │   ┌───────────────────────────────────┐                     │   │
-│   │   │  openclaw-gateway-<profile>       │                     │   │
-│   │   │  • OpenClaw + pnpm + bun + brew   │                     │   │
-│   │   │  • ttyd + filebrowser (web tools) │                     │   │
-│   │   │  • Tailscale (in-container)       │                     │   │
-│   │   │    → Serve: /shell, /files,       │                     │   │
-│   │   │      /openclaw (ingress)          │                     │   │
-│   │   │  • dns: [172.28.0.2] (Envoy)      │                     │   │
-│   │   │                                   │                     │   │
-│   │   │  entrypoint.sh (root, immutable): │                     │   │
-│   │   │  ┌─────────────────────────────┐  │                     │   │
-│   │   │  │ ip route default via Envoy  │  │                     │   │
-│   │   │  │ NAT: SSH/TCP → DNAT :10001+ │  │                     │   │
-│   │   │  │ NAT: UDP → DNAT :10100+     │  │                     │   │
-│   │   │  │ NAT: ALL TCP → DNAT :10000  │  │                     │   │
-│   │   │  │ FILTER: OUTPUT DROP default │  │                     │   │
-│   │   │  │ tailscaled (userspace)      │  │                     │   │
-│   │   │  │ gosu → drops to node user   │  │                     │   │
-│   │   │  └─────────────────────────────┘  │                     │   │
-│   │   └───────────────────────────────────┘                     │   │
-│   │              ... (N gateways per server)                    │   │
-│   │                                                             │   │
-│   │                  ┌──────────────────────────┐               │   │
-│   │    Internet ◄──► │  Envoy (172.28.0.2)      │               │   │
-│   │   (whitelisted   │                          │               │   │
-│   │    domains only) │  TLS (:10000):           │               │   │
-│   │                  │  • TLS Inspector (SNI)   │               │   │
-│   │    Cloudflare    │  • Domain whitelist      │               │   │
-│   │    1.1.1.2 ◄──   │  • MITM inspection (opt) │               │   │
-│   │    1.0.0.2       │                          │               │   │
-│   │                  │  SSH/TCP (:10001+):      │               │   │
-│   │                  │  • Per-rule tcp_proxy    │               │   │
-│   │                  │  • STRICT_DNS / STATIC   │               │   │
-│   │                  │                          │               │   │
-│   │                  │  UDP (:10100+):          │               │   │
-│   │                  │  • Per-rule udp_proxy    │               │   │
-│   │                  │  • Tailscale DERP STUN   │               │   │
-│   │                  │                          │               │   │
-│   │                  │  DNS (:53 UDP):          │               │   │
-│   │                  │  • → Cloudflare (malware │               │   │
-│   │                  │    blocking resolvers)   │               │   │
-│   │                  └──────────────────────────┘               │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│   Docker daemon (provisioned by HostBootstrap)                      │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  Remote VPS (Hetzner / DigitalOcean / Oracle Cloud)                  │
+│                                                                      │
+│   Per gateway: 1 bridge network + 3 containers (shared netns)        │
+│                                                                      │
+│   ┌──────────────────────────────────────────────────────────────┐   │
+│   │  openclaw-net-<profile> (bridge network)                     │   │
+│   │                                                              │   │
+│   │   ┌────────────────────────────────────────────────────┐     │   │
+│   │   │  tailscale-<profile> (sidecar — owns netns)        │     │   │
+│   │   │  • Tailscale containerboot (official entrypoint)   │     │   │
+│   │   │  • TS_SERVE_CONFIG → serve-config.json             │     │   │
+│   │   │  • iptables REDIRECT (root-owned, immutable)       │     │   │
+│   │   │  • dns: [1.1.1.2, 1.0.0.2] (Cloudflare)           │     │   │
+│   │   │  • /dev/net/tun (kernel networking)                │     │   │
+│   │   │                                                    │     │   │
+│   │   │  sidecar-entrypoint.sh (runs before containerboot):│     │   │
+│   │   │  ┌──────────────────────────────────────────────┐  │     │   │
+│   │   │  │ NAT: RETURN for uid 101 (envoy)              │  │     │   │
+│   │   │  │ NAT: RETURN for uid 0 (root/containerboot)   │  │     │   │
+│   │   │  │ NAT: SSH/TCP → REDIRECT :10001+ (per-rule)   │  │     │   │
+│   │   │  │ NAT: ALL TCP → REDIRECT :10000 (catch-all)   │  │     │   │
+│   │   │  │ UDP: ACCEPT Docker DNS (127.0.0.11)          │  │     │   │
+│   │   │  │ UDP: ACCEPT root (containerboot)             │  │     │   │
+│   │   │  │ UDP: DROP all others                         │  │     │   │
+│   │   │  │ exec containerboot (Tailscale entrypoint)    │  │     │   │
+│   │   │  └──────────────────────────────────────────────┘  │     │   │
+│   │   │                                                    │     │   │
+│   │   │  ┌──────────────────────────────────────────────┐  │     │   │
+│   │   │  │  envoy-<profile> (network_mode: container:)  │  │     │   │
+│   │   │  │                                              │  │     │   │
+│   │   │  │  TLS (:10000):                               │  │     │   │
+│   │   │  │  • TLS Inspector (SNI) + domain whitelist    │  │     │   │
+│   │   │  │  • MITM inspection (optional per-rule)       │  │     │   │
+│   │   │  │                                              │  │     │   │
+│   │   │  │  SSH/TCP (:10001+):                          │  │     │   │
+│   │   │  │  • Per-rule tcp_proxy (STRICT_DNS / STATIC)  │  │     │   │
+│   │   │  └──────────────────────────────────────────────┘  │     │   │
+│   │   │                                                    │     │   │
+│   │   │  ┌──────────────────────────────────────────────┐  │     │   │
+│   │   │  │  openclaw-<profile> (network_mode: container:)│  │     │   │
+│   │   │  │  • OpenClaw + pnpm + bun + brew + uv         │  │     │   │
+│   │   │  │  • sshd on :2222 (loopback)                  │  │     │   │
+│   │   │  │  • No CAP_NET_ADMIN, no iptables             │  │     │   │
+│   │   │  └──────────────────────────────────────────────┘  │     │   │
+│   │   └────────────────────────────────────────────────────┘     │   │
+│   │              ... (N gateways per server)                     │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│   Tailscale Serve exposes per gateway:                               │
+│     • HTTPS :443 → http://127.0.0.1:18789 (Control UI)              │
+│     • SSH :22 → 127.0.0.1:2222 (sshd in gateway)                    │
+│                                                                      │
+│   Docker daemon (provisioned by HostBootstrap)                       │
+└──────────────────────────────────────────────────────────────────────┘
 
 Operator machine:
   $ pulumi up --stack dev     # provisions server + deploys everything
   $ pulumi destroy --stack dev  # tears down
 ```
 
-One Pulumi stack = one server. Each server runs N gateway instances sharing a single Envoy egress proxy. Tailscale runs inside each gateway container and handles all ingress (Serve for private tailnet access, Funnel for public webhooks). No self-managed TLS certificates or reverse proxies.
+One Pulumi stack = one server. Each server runs N gateway instances, each with a dedicated Tailscale sidecar + Envoy egress proxy. All three containers per gateway share a single network namespace owned by the sidecar. Tailscale Serve handles ingress (HTTPS for Control UI, SSH for terminal access). No self-managed TLS certificates or reverse proxies.
 
-Gateway containers now also mount the OpenClaw runtime home and Linuxbrew data paths as named Docker volumes so runtime-installed binaries can persist across container recreation. This is intentionally experimental and trades container purity for operational flexibility while we validate real-world behavior.
+Gateway containers mount the OpenClaw runtime home and Linuxbrew data paths as named Docker volumes so runtime-installed binaries persist across container recreation. This is intentionally experimental and trades container purity for operational flexibility.
 
 ## Threat Model
 
 **Threat:** Prompt injection coerces the AI agent into exfiltrating data. The agent can run any tool available in the container — `curl`, `wget`, `ncat`, `ssh`, raw sockets, subprocesses. It can use any port, any protocol, and target any destination. Application-level proxy settings (`HTTP_PROXY`) are trivially bypassed.
 
-**Defense-in-depth (five layers):**
+**Defense-in-depth (four layers):**
 
-| Layer                                 | Mechanism                                                                       | What it stops                                         | Bypassable by `node` user?                          |
-| ------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------- |
-| **1. Network isolation**              | Docker `internal: true` network                                                 | No default route to internet — no IP to reach         | No                                                  |
-| **2. iptables DNAT + FILTER**         | Root-owned rules: SSH/TCP → specific Envoy ports, all other TCP → Envoy:10000   | Every TCP connection goes through Envoy               | No (`CAP_NET_ADMIN` required, root only)            |
-| **3. Envoy protocol-aware whitelist** | TLS: SNI inspection + domain whitelist. SSH/TCP: per-rule port-mapped listeners | Non-whitelisted HTTPS, non-mapped SSH/TCP, plain HTTP | No (Envoy resolves DNS independently)               |
-| **4. Egress policy engine**           | Typed `EgressRule[]` with domain/IP + protocol support (TLS, SSH, TCP)          | Structured policy control with per-protocol handling  | No (Envoy config, not in container)                 |
-| **5. Malware-blocking DNS**           | Cloudflare 1.1.1.2 / 1.0.0.2 via Envoy DNS listener                             | Known malware, phishing, and C2 domains               | No (Envoy resolves DNS, containers cannot override) |
+| Layer                                 | Mechanism                                                                       | What it stops                                         | Bypassable by `node` user?                         |
+| ------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------- |
+| **1. iptables REDIRECT + UDP DROP**   | Root-owned rules in sidecar: SSH/TCP → specific Envoy ports, all TCP → :10000   | Every TCP connection goes through Envoy               | No (`CAP_NET_ADMIN` required, sidecar only)        |
+| **2. Envoy protocol-aware whitelist** | TLS: SNI inspection + domain whitelist. SSH/TCP: per-rule port-mapped listeners | Non-whitelisted HTTPS, non-mapped SSH/TCP, plain HTTP | No (Envoy resolves DNS independently)              |
+| **3. Egress policy engine**           | Typed `EgressRule[]` with domain/IP + protocol support (TLS, SSH, TCP)          | Structured policy control with per-protocol handling  | No (Envoy config, not in container)                |
+| **4. Malware-blocking DNS**           | Cloudflare 1.1.1.2 / 1.0.0.2 via sidecar `dns:` config (inherited by all)       | Known malware, phishing, and C2 domains               | No (Docker DNS config, containers cannot override) |
+
+**UDP exfiltration prevention:** The sidecar's iptables rules allow Docker DNS (127.0.0.11), root-owned UDP (containerboot/tailscaled for WireGuard), and DROP all other UDP. The `node` user cannot send UDP.
 
 **Why SNI spoofing doesn't work:** If an attacker forges the SNI to `api.anthropic.com` while connecting to `evil.com`'s IP, Envoy resolves `api.anthropic.com` via DNS independently and connects to the **real** IP — not the attacker's server.
 
@@ -155,10 +158,10 @@ pulumi up
 
 1. Provision a VPS (Hetzner, DigitalOcean, or Oracle Cloud)
 2. Install Docker + fail2ban on the host
-3. Create Docker networks + deploy Envoy egress proxy
-4. Build gateway Docker images and deploy containers
+3. Render Envoy config + generate TLS certificates
+4. Build gateway Docker images and deploy containers (sidecar + envoy + gateway per profile)
 5. Configure each gateway via ephemeral init container
-6. Tailscale Serve configured inside each gateway container at startup
+6. Tailscale Serve auto-configured via `TS_SERVE_CONFIG` (HTTPS + SSH)
 
 ## Stack Configuration
 
@@ -197,18 +200,18 @@ Server (VPS provisioning: Hetzner / DigitalOcean / Oracle)
   ↓ connection (public IP SSH)
 HostBootstrap (Docker + fail2ban install)
   ↓ dockerHost (public IP SSH)
-EnvoyEgress (Docker networks + Envoy container)
-  ↓ internalNetworkName
-Gateway(s) (1+ OpenClaw instances per server)
-  ↓ Tailscale inside container (Serve/Funnel)
+EnvoyEgress (config rendering + cert generation — no Docker resources)
+  ↓ envoyConfigPath, envoyConfigHash, inspectedDomains
+Gateway(s) (1+ per server: bridge network + sidecar + envoy + gateway containers)
+  ↓ Tailscale Serve (HTTPS + SSH via TS_SERVE_CONFIG)
 ```
 
-| Component       | Pulumi Type                    | Provider                             | Purpose                                                                  |
-| --------------- | ------------------------------ | ------------------------------------ | ------------------------------------------------------------------------ |
-| `Server`        | `openclaw:infra:Server`        | `@pulumi/hcloud` / DO / OCI          | Provision VPS, expose IP + SSH connection                                |
-| `HostBootstrap` | `openclaw:infra:HostBootstrap` | `@pulumi/command`                    | Install Docker + fail2ban on bare host                                   |
-| `EnvoyEgress`   | `openclaw:infra:EnvoyEgress`   | `@pulumi/docker` + `@pulumi/command` | Create networks, deploy Envoy                                            |
-| `Gateway`       | `openclaw:app:Gateway`         | `@pulumi/docker` + `@pulumi/command` | Build image, deploy container, configure gateway, Tailscale in container |
+| Component       | Pulumi Type                    | Provider                             | Purpose                                                                      |
+| --------------- | ------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------- |
+| `Server`        | `openclaw:infra:Server`        | `@pulumi/hcloud` / DO / OCI          | Provision VPS, expose IP + SSH connection                                    |
+| `HostBootstrap` | `openclaw:infra:HostBootstrap` | `@pulumi/command`                    | Install Docker + fail2ban on bare host                                       |
+| `EnvoyEgress`   | `openclaw:infra:EnvoyEgress`   | `@pulumi/command`                    | Render envoy.yaml, upload config, generate CA + MITM certs                   |
+| `Gateway`       | `openclaw:app:Gateway`         | `@pulumi/docker` + `@pulumi/command` | Create bridge network, sidecar, envoy, gateway containers; configure gateway |
 
 ## Egress Domain Whitelist
 
@@ -216,12 +219,12 @@ Envoy enforces protocol-aware egress filtering: TLS connections are filtered by 
 
 **Always included (hardcoded, cannot be removed):**
 
-| Category       | Domains                                                                                                                                                                                      |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Infrastructure | `clawhub.com`, `registry.npmjs.org`                                                                                                                                                          |
-| AI providers   | `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.x.ai`                                                                                      |
-| Homebrew       | `github.com`, `*.githubusercontent.com`, `ghcr.io`, `formulae.brew.sh`                                                                                                                       |
-| Tailscale      | `tailscale.com`, `login.tailscale.com`, `controlplane.tailscale.com`, `log.tailscale.com`, `derp1–28.tailscale.com`, `*.api.letsencrypt.org` (TLS); `derp1–28.tailscale.com` (UDP STUN 3478) |
+| Category       | Domains                                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Infrastructure | `clawhub.com`, `registry.npmjs.org`                                                                                    |
+| AI providers   | `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.x.ai`                |
+| Homebrew       | `github.com`, `*.githubusercontent.com`, `ghcr.io`, `formulae.brew.sh`                                                 |
+| Tailscale      | `*.tailscale.com` (wildcard — covers control plane, DERP relays, all subdomains), `*.api.letsencrypt.org` (ACME certs) |
 
 User-defined `egressPolicy` rules are **additive** — hardcoded domains are always present. Duplicates are deduplicated by `mergeEgressPolicy()`.
 
@@ -247,13 +250,13 @@ openclaw-deploy:egressPolicy:
     action: allow
 ```
 
-SSH/TCP rules use per-rule port mapping: each rule gets a dedicated Envoy listener port (starting from 10001), and destination-specific iptables DNAT rules in the gateway entrypoint route matching traffic to the correct port. Domain resolution happens at container startup.
+SSH/TCP rules use per-rule port mapping: each rule gets a dedicated Envoy listener port (starting from 10001), and destination-specific iptables REDIRECT rules in the sidecar entrypoint route matching traffic to the correct port. Domain resolution happens at container startup.
 
 ## Experimental Runtime Binary Persistence
 
 This project currently uses a non-standard, intentionally experimental container pattern to support runtime binary installs:
 
-- The gateway creates a persistent named volume OpenClaw user home (`/home/node`).
+- The gateway creates a persistent named volume for the OpenClaw user home (`/home/node`).
 - The gateway creates a persistent named volume for Linuxbrew data (`/home/linuxbrew/.linuxbrew`).
 
 Why this exists: I want to test whether persistent user-space runtime installs (pnpm/brew/uv/etc.) are practical for gateway operations.
@@ -262,21 +265,18 @@ Why this is experimental: it is admittedly ugly and goes against normal immutabl
 
 Operational notes:
 
-- On first run, Tailscale will register your gateway and assign it a random tailnet domain on your tailscale network. It can always be found in the Tailscale admin console. This domain changes every time you rebuild the stack or recreate the gateway container (stopping/restarting does not change it).
+- On first run, Tailscale will register your gateway and assign it a random tailnet domain on your tailscale network. It can always be found in the Tailscale admin console. This domain changes every time you rebuild the stack or recreate the sidecar container (stopping/restarting does not change it).
 - Gateway is not a daemon supervisor process; after installing a new binary, restart is required for predictable runtime behavior.
-- From the host, you can SSH into the VPS host and restart with Docker (`docker restart openclaw-gateway-<profile>`) (ssh key is stored in Pulumi), or from inside the web shell run `kill 1` as root.
-- Due to strict UDP egress lockdown, Tailscale SSH is extremely slow.
-- For day-to-day remote access we expose web tools over Tailscale Serve on loopback endpoints:
-  - `<device_tailnetdomain>.ts.net/shell` for web terminal access
-  - `<device_tailnetdomain>.ts.net/files` for web file browser access
-- When adding new binaries interactively, use the webshell and run `kill 1` as root to restart the gateway container.
+- From the host, you can SSH into the VPS host and restart with Docker (`docker restart openclaw-<profile>`) (ssh key is stored in Pulumi).
+- For day-to-day remote access, SSH into the gateway via Tailscale: `ssh root@<device_tailnetdomain>.ts.net` (Tailscale Serve forwards port 22 to sshd on port 2222 inside the gateway).
+- Control UI is available at `https://<device_tailnetdomain>.ts.net/?token=<gateway-token>`.
 
 Runtime install workflow (example):
 
-1. Open the controlui `<device_tailnetdomain>.ts.net/openclaw` skills area and install deps for skills (or use the webshell and `su - node` to install as gateway's user)
-2. Install your runtime binary using the package manager of choice (for example via `brew`, `pnpm`, or `uv`).
-3. In `<device_tailnetdomain>.ts.net/shell` as root (default) and run `kill 1`.
-4. Open the controlui `<device_tailnetdomain>.ts.net/openclaw` and verify it notices the binary.
+1. SSH into the gateway: `ssh root@<device_tailnetdomain>.ts.net`
+2. Switch to the node user: `su - node`
+3. Install your runtime binary using the package manager of choice (e.g. `brew`, `pnpm`, or `uv`).
+4. Exit and restart: `docker restart openclaw-<profile>` from the host, or `kill 1` as root inside the container.
 
 Because `/home/node` and `/home/linuxbrew/.linuxbrew` are persistent named volumes, installed binaries and package-manager state persist across container restarts/recreation.
 
@@ -290,8 +290,8 @@ Once it does I recommend using this guide to onboard and configure it [https://a
 
 But as per that guide at the very least your first message to the bot should be:
 
-- "Hey, let’s get you set up. Read BOOTSTRAP.md and walk me through it." To get it onboarded with you followed by...
-- “When I ask questions in Discord channels, use memory_search or memory_get if you need long-term context from MEMORY.md.”
+- "Hey, let's get you set up. Read BOOTSTRAP.md and walk me through it." To get it onboarded with you followed by...
+- "When I ask questions in Discord channels, use memory_search or memory_get if you need long-term context from MEMORY.md."
 
 As I iron out the kinks and rough edges, I will update this guide to be more user-friendly. But in all fairness OpenClaw itself is very difficult to set up, its documentation rarely is fully accurate, and I had to resort to cloning locally and letting a claude code agent analyze it with Serena LSP to figure out the code paths and actual settings and constraints, there are actually many bugs and gotchas in OpenClaw. Disclaimer: I don't blame the maintainers for this is in the new era of AI generate code adding 1000s of lines a second, and its a massive project I had an anxiety attack just looking at the amount of PRs they have to deal with...
 
@@ -427,19 +427,19 @@ pulumi up --stack openclaw-ref
 # Show stack outputs (gateway URLs are secret outputs)
 pulumi stack output --stack openclaw-ref
 pulumi stack output --stack openclaw-ref --show-secrets
-pulumi stack output gatewayServices --show-secrets # this will show you your tailnet hostname and required gateway token querystring to authorize control ui, and provide links to your webshell and file browser
+pulumi stack output gatewayServices --show-secrets # shows tailnet hostname, gateway token, SSH and HTTPS access info
 ```
 
-After deploy, check the output for your tailnet hostname and links to view your services. There is a slight delay when initially connecting because Tailscale needs to generate an SSL certificate for the domain. Be patient — it can take up to 10-20 seconds. (You need to enable HTTPS in Tailscale; see the docs.) On first run, Tailscale will register your gateway and assign it a random tailnet domain. This domain changes every time you rebuild the stack or recreate the gateway container (stopping/restarting does not change it).
+After deploy, check the output for your tailnet hostname and access details. There is a slight delay when initially connecting because Tailscale needs to generate an SSL certificate for the domain. Be patient — it can take up to 10-20 seconds. (You need to enable HTTPS in Tailscale; see the docs.) On first run, Tailscale will register your gateway and assign it a random tailnet domain. This domain changes every time you rebuild the stack or recreate the sidecar container (stopping/restarting does not change it).
 
-- `<device_tailnetid>.ts.net/openclaw` for Control UI (needs the token querystring for the first connection to trust your device)
-- `<device_tailnetid>.ts.net/shell` for web terminal
-- `<device_tailnetid>.ts.net/files` for web file browser
+- `https://<device_tailnetid>.ts.net/?token=<gateway-token>` for Control UI
+- `ssh root@<device_tailnetid>.ts.net` for SSH access (Tailscale Serve forwards to sshd inside gateway)
 
 ### 6) Post-deploy operational notes
 
-- If you install new runtime binaries run `kill 1` as root in `/shell`. It forces the container to restart. You can't use openclaw commands to do this because we aren't running as a daemon.
-- Tailscale SSH is extremely slow due to the strict UDP egress lockdown (leaving the port open is an easy exfiltration highway, so I downgrade attempts to HTTPS and only for tailscale domains trying UDP); `/shell` and `/files` services are the intended low-friction operational path and are only running on localhost in the container and exposed through your tailnet auth.
+- If you install new runtime binaries, restart the gateway container from the host: `docker restart openclaw-<profile>`, or `kill 1` as root inside the container via SSH.
+- SSH access is provided via Tailscale Serve TCP forwarding — it forwards port 22 on the Tailscale node to sshd (port 2222, loopback) inside the gateway container.
+- Control UI is exposed via Tailscale Serve HTTPS handler — it proxies to the gateway on loopback.
 
 ## Common Operations
 
@@ -450,20 +450,23 @@ pulumi up --stack dev
 # Preview changes without applying
 pulumi preview --stack dev
 
-# View stack outputs (server IP, Tailscale IP, gateway URLs)
+# View stack outputs (server IP, gateway URLs)
 pulumi stack output --stack dev
 
 # Tear down everything
 pulumi destroy --stack dev
 
-# View gateway logs (via SSH)
-ssh root@<server-ip> docker logs -f openclaw-gateway-personal
+# View gateway logs (via SSH to host)
+ssh root@<server-ip> docker logs -f openclaw-personal
 
 # Restart a gateway after config changes
-ssh root@<server-ip> docker restart openclaw-gateway-personal
+ssh root@<server-ip> docker restart openclaw-personal
+
+# SSH into gateway via Tailscale
+ssh root@<device_tailnetid>.ts.net
 
 # Run an openclaw CLI command inside a gateway container
-ssh root@<server-ip> docker exec openclaw-gateway-personal openclaw config get gateway
+ssh root@<server-ip> docker exec openclaw-personal openclaw config get gateway
 ```
 
 ## Development
@@ -486,21 +489,24 @@ components/
   index.ts                  # Re-exports
   server.ts                 # VPS provisioning (Hetzner / DigitalOcean / Oracle)
   bootstrap.ts              # Docker + fail2ban install on bare host
-  envoy.ts                  # Egress proxy: networks + Envoy container
-  gateway.ts                # OpenClaw gateway instance + config + Tailscale
+  envoy.ts                  # Egress proxy: config rendering + cert generation
+  gateway.ts                # Bridge network + sidecar + envoy + gateway containers
 config/
   index.ts                  # Re-exports
   types.ts                  # EgressRule, VpsProvider, GatewayConfig, StackConfig
   domains.ts                # Hardcoded egress rules + mergeEgressPolicy()
-  defaults.ts               # Constants (networks, ports, images, packages)
+  defaults.ts               # Constants (ports, images, packages)
 templates/
   index.ts                  # Re-exports
   dockerfile.ts             # Renders Dockerfile (node:22-bookworm + tools)
-  entrypoint.ts             # Renders entrypoint.sh (iptables + gosu)
-  envoy.ts                  # Renders envoy.yaml (egress-only proxy + DNS)
+  entrypoint.ts             # Renders entrypoint.sh (sshd + gosu)
+  sidecar.ts                # Renders sidecar-entrypoint.sh (iptables REDIRECT + containerboot)
+  serve.ts                  # Renders serve-config.json (Tailscale Serve config)
+  envoy.ts                  # Renders envoy.yaml (egress-only TLS proxy)
 tests/
   config.test.ts            # Config types and domain merging
-  templates.test.ts         # Dockerfile/entrypoint rendering
+  templates.test.ts         # Dockerfile/entrypoint/sidecar/serve rendering
   envoy.test.ts             # Envoy config rendering
-  components.test.ts        # Pulumi components (mocked)
+  envoy-component.test.ts   # EnvoyEgress component (mocked)
+  components.test.ts        # All Pulumi components (mocked)
 ```

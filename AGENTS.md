@@ -10,14 +10,14 @@ Primary goals:
 - Install Docker + fail2ban on bare hosts via remote commands.
 - Deploy OpenClaw gateway containers with transparent egress isolation via Envoy proxy.
 - Manage fleet-scale deployments: one Pulumi stack per server, N gateways per server.
-- Provide secure access via Tailscale Serve/Funnel (no self-managed TLS/ingress).
+- Provide secure access via Tailscale Serve (SSH + HTTPS, no self-managed TLS/ingress).
 
 ## What Agents Should Assume
 
 - This is a Pulumi TypeScript project — not a CLI, not Docker Compose.
 - Infrastructure is managed declaratively via Pulumi components and stack config.
 - The Docker provider connects to remote hosts via `ssh://root@<ip>` (no local Docker).
-- Templates (`templates/`) are pure functions that render Docker artifacts (Dockerfile, entrypoint.sh, envoy.yaml).
+- Templates (`templates/`) are pure functions that render Docker artifacts (Dockerfile, entrypoint.sh, envoy.yaml, serve-config.json).
 - Components (`components/`) are Pulumi `ComponentResource` subclasses that compose infrastructure.
 - Changes should prioritize compatibility, determinism, and minimal image complexity.
 - Prefer small, focused edits rather than broad refactors.
@@ -37,23 +37,26 @@ Primary goals:
 │   ├── index.ts                      # Re-exports
 │   ├── server.ts                     # VPS provisioning (Hetzner; DO/Oracle Phase 2)
 │   ├── bootstrap.ts                  # Docker + fail2ban install on bare host
-│   ├── envoy.ts                      # Egress proxy: networks + Envoy container
-│   └── gateway.ts                    # OpenClaw gateway instance + config + Tailscale
+│   ├── envoy.ts                      # Egress proxy: config rendering + cert generation
+│   └── gateway.ts                    # Bridge network + sidecar + envoy + gateway containers
 ├── config/
 │   ├── index.ts                      # Re-exports
 │   ├── types.ts                      # EgressRule, VpsProvider, GatewayConfig, StackConfig
 │   ├── domains.ts                    # Hardcoded egress rules + mergeEgressPolicy()
-│   └── defaults.ts                   # Constants (networks, ports, images, packages)
+│   └── defaults.ts                   # Constants (ports, images, packages)
 ├── templates/
 │   ├── index.ts                      # Re-exports
 │   ├── dockerfile.ts                 # Renders Dockerfile (node:22-bookworm + tools)
-│   ├── entrypoint.ts                 # Renders entrypoint.sh (iptables + tailscaled + gosu)
-│   └── envoy.ts                      # Renders envoy.yaml (egress-only proxy + DNS)
+│   ├── entrypoint.ts                 # Renders entrypoint.sh (sshd + gosu node)
+│   ├── sidecar.ts                    # Renders sidecar-entrypoint.sh (iptables REDIRECT + containerboot)
+│   ├── serve.ts                      # Renders serve-config.json (Tailscale Serve config)
+│   └── envoy.ts                      # Renders envoy.yaml (egress-only TLS proxy)
 └── tests/
     ├── config.test.ts                # Config types and domain merging
-    ├── templates.test.ts             # Dockerfile/entrypoint rendering
+    ├── templates.test.ts             # Dockerfile/entrypoint/sidecar/serve rendering
     ├── envoy.test.ts                 # Envoy config rendering
-    └── envoy-component.test.ts       # EnvoyEgress Pulumi component (mocked)
+    ├── envoy-component.test.ts       # EnvoyEgress Pulumi component (mocked)
+    └── components.test.ts            # All Pulumi components (mocked)
 ```
 
 ## Component Hierarchy
@@ -65,18 +68,34 @@ Server (VPS provisioning)
   ↓ connection (public IP SSH)
 HostBootstrap (Docker + fail2ban install)
   ↓ dockerHost (public IP)
-EnvoyEgress (Docker networks + Envoy container)
-  ↓ internalNetworkName
-Gateway(s) (1+ OpenClaw instances per server)
-  ↓ Tailscale inside container (serve/funnel)
+EnvoyEgress (config rendering + cert generation — no Docker resources)
+  ↓ envoyConfigPath, envoyConfigHash, inspectedDomains
+Gateway(s) (1+ per server: bridge network + sidecar + envoy + gateway containers)
 ```
 
-| Component       | Type                           | Provider                             | Purpose                                                                  |
-| --------------- | ------------------------------ | ------------------------------------ | ------------------------------------------------------------------------ |
-| `Server`        | `openclaw:infra:Server`        | `@pulumi/hcloud`                     | Provision VPS, expose IP + connection                                    |
-| `HostBootstrap` | `openclaw:infra:HostBootstrap` | `@pulumi/command`                    | Install Docker + fail2ban on bare host                                   |
-| `EnvoyEgress`   | `openclaw:infra:EnvoyEgress`   | `@pulumi/docker` + `@pulumi/command` | Create internal/egress networks, deploy Envoy                            |
-| `Gateway`       | `openclaw:app:Gateway`         | `@pulumi/docker` + `@pulumi/command` | Build image, create container, configure gateway, Tailscale in container |
+| Component       | Type                           | Provider                             | Purpose                                                                      |
+| --------------- | ------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------- |
+| `Server`        | `openclaw:infra:Server`        | `@pulumi/hcloud`                     | Provision VPS, expose IP + connection                                        |
+| `HostBootstrap` | `openclaw:infra:HostBootstrap` | `@pulumi/command`                    | Install Docker + fail2ban on bare host                                       |
+| `EnvoyEgress`   | `openclaw:infra:EnvoyEgress`   | `@pulumi/command`                    | Render envoy.yaml, upload config, generate CA + MITM certs                   |
+| `Gateway`       | `openclaw:app:Gateway`         | `@pulumi/docker` + `@pulumi/command` | Create bridge network, sidecar, envoy, gateway containers; configure gateway |
+
+## Network Topology
+
+All containers per gateway share a single network namespace via the Tailscale sidecar:
+
+```
+[Bridge network: openclaw-net-<profile>]
+  tailscale-<profile>  (sidecar — owns netns, iptables REDIRECT, containerboot)
+    ├── envoy-<profile>  (network_mode: container:tailscale-<profile>)
+    └── openclaw-<profile>  (network_mode: container:tailscale-<profile>)
+```
+
+- **Single bridge network** per gateway (NOT `internal: true` — sidecar needs internet for Envoy upstreams)
+- All containers share the sidecar's network namespace via `network_mode: container:`
+- iptables uses `REDIRECT` (not `DNAT`) — everything is localhost in shared netns
+- Owner-match exclusions (uid 101 envoy, uid 0 root) prevent redirect loops
+- No static IPs, no IPAM, no dual-network architecture
 
 ## Stack Configuration
 
@@ -97,11 +116,15 @@ Configuration is managed via `pulumi config` / `Pulumi.<stack>.yaml`:
 ## Deployment Model
 
 - Each Pulumi stack deploys **one server** with **N gateway instances**.
-- Envoy is the sole egress proxy — gateway containers route all traffic through it.
-- Tailscale runs **inside gateway containers** (`openclaw gateway --tailscale serve/funnel`). Each gateway is a separate Tailscale device. The host does not run Tailscale.
-- Tailscale uses `--tun=userspace-networking` (no TUN device). DERP relay STUN (UDP 3478) is routed through Envoy's UDP proxy listeners. DERP relay data (TCP 443) is routed through Envoy's TLS proxy. Tailscale domains are enumerated (no wildcards) in `config/domains.ts`.
-- Gateway containers run on an `internal: true` Docker network with no default route to the internet.
-- Entrypoint.sh (running as root) adds a default route via Envoy, sets iptables DNAT + FILTER rules, starts `tailscaled` (if Tailscale state dir is mounted), then drops to `node` user via `gosu`.
+- Envoy is the sole egress proxy — all TCP egress routes through it via iptables REDIRECT.
+- **Tailscale sidecar model**: Each gateway has a dedicated Tailscale sidecar container (`tailscale-<profile>`) that owns the network namespace. The sidecar runs the official `containerboot` entrypoint (Tailscale's Docker image entrypoint). The gateway and envoy containers share the sidecar's netns via `network_mode: container:tailscale-<profile>`.
+- The sidecar entrypoint sets iptables REDIRECT rules, then `exec`s `containerboot` which handles Tailscale auth, state, and serve config automatically.
+- Tailscale uses kernel networking (`TS_USERSPACE=false`) with TUN device (`/dev/net/tun`). WireGuard UDP is allowed only for root (containerboot) via `iptables -m owner --uid-owner 0`. The node user (openclaw) is blocked from all UDP egress.
+- The sidecar container uses `dns: [1.1.1.2, 1.0.0.2]` (Cloudflare malware-blocking DNS, inherited by all containers via shared netns).
+- The gateway entrypoint (`entrypoint.sh`) starts sshd, fixes permissions, and drops to `node` user via `gosu`. No iptables, no routing, no tailscaled.
+- SSH access is provided via Tailscale Serve TCP forwarding (port 22 → sshd on port 2222).
+- HTTPS access is provided via Tailscale Serve web handler (port 443 → gateway on loopback).
+- `TS_SERVE_CONFIG` points to a static JSON file rendered by `renderServeConfig()` — containerboot applies it automatically.
 - Gateway configuration is written to a shared volume _before_ the gateway container starts via an ephemeral CLI container (`docker run --rm --network none --user node`). This avoids crash-loops from missing config. After `configSet`, optional `setupCommands` run OpenClaw subcommands (auto-prefixed with `openclaw`, e.g. `models set`, `onboard`). Secret env vars from `gatewaySecretEnv-<profile>` are injected into both the init container and the main gateway container.
 - Gateway auth token is passed via `OPENCLAW_GATEWAY_TOKEN` env var (takes precedence over config file in local mode).
 - Docker provider connects to remote hosts via SSH (`ssh://root@<publicIP>`).
@@ -124,7 +147,7 @@ Before considering work complete, agents should:
 - Components follow Pulumi conventions: `ComponentResource` subclass, `registerOutputs()`, parent/dependency tracking.
 - Config types are in `config/types.ts` — update the interface when adding new fields.
 - Hardcoded egress rules are in `config/domains.ts` — these cannot be removed.
-- All constants (IPs, ports, image tags) live in `config/defaults.ts`.
+- All constants (ports, image tags) live in `config/defaults.ts`.
 
 ## Threat Model & Egress Security
 
@@ -134,80 +157,63 @@ raw sockets, subprocesses — anything available in the container). Application-
 like `HTTP_PROXY` env vars are insufficient because a prompt-injected agent can use **any tool**
 that ignores proxy settings, connect on **any port**, or use **any protocol**.
 
-**Defense-in-depth model (five layers):**
+**Defense-in-depth model (four layers):**
 
-1. **Docker `internal: true` network** — the gateway container has no default route to the internet.
-   There is no IP to reach. This is the hard network boundary. The entrypoint adds a default route
-   via Envoy (`ip route add default via $ENVOY_IP`) so the kernel can make routing decisions for
-   iptables DNAT to fire — without this, connections to external IPs fail with "Network is unreachable"
-   before iptables can rewrite them.
+1. **Root-owned iptables REDIRECT rules** — set by the **sidecar entrypoint**
+   (`sidecar-entrypoint.sh`) running as root before `exec containerboot`. The NAT table uses
+   owner-match to exclude Envoy (uid 101) and root (uid 0) from redirection, then REDIRECTs
+   **all other outbound TCP** to Envoy's proxy listener on localhost:10000. No FILTER table is
+   needed — REDIRECT + UDP DROP is sufficient in the shared netns model. **UDP exfiltration is
+   prevented** by `iptables -A OUTPUT -p udp -d 127.0.0.11 -j ACCEPT` (Docker DNS), then
+   `iptables -A OUTPUT -p udp -m owner --uid-owner root -j ACCEPT` (containerboot/tailscaled
+   only), then `iptables -A OUTPUT -p udp -j DROP` (block all other UDP). The gateway container
+   shares this network namespace via `network_mode: container:tailscale-<profile>` and has
+   **no `CAP_NET_ADMIN`**, so the `node` user cannot modify these rules.
 
-2. **Root-owned iptables DNAT + FILTER rules** — set by `entrypoint.sh` running as root before
-   dropping to the `node` user. The entrypoint derives `INTERNAL_SUBNET` from Envoy's IP (strip
-   last octet, append `.0/24`). The NAT table skips DNAT for loopback (`-o lo`) and the internal
-   subnet, then transparently redirects **all other outbound TCP** to Envoy's proxy listener via
-   DNAT. This allows gateway health checks (loopback) and container-to-container traffic (internal
-   subnet) to work without hitting Envoy, while all external traffic is captured. The FILTER table
-   provides defense-in-depth with `OUTPUT DROP` default policy, only allowing loopback, Docker DNS,
-   established/related, and the internal subnet. The `node` user **cannot modify these rules** —
-   `CAP_NET_ADMIN` is only available to root, and the entrypoint drops to `node` via `gosu` after
-   configuring iptables. The entrypoint also restores Docker's `DOCKER_OUTPUT` chain jump after
-   flushing nat OUTPUT (Docker's embedded DNS uses this chain to DNAT port 53 to a high port).
-
-3. **Envoy SNI-based domain whitelist** — the egress listener uses TLS Inspector to read the SNI
+2. **Envoy SNI-based domain whitelist** — the egress listener uses TLS Inspector to read the SNI
    from the TLS ClientHello without terminating TLS (no MITM). Only connections with whitelisted
    SNI values are forwarded via dynamic DNS resolution. Non-TLS traffic (SSH, plain HTTP, raw TCP)
    has no SNI and is categorically denied. Non-whitelisted SNI is denied. SNI spoofing is useless
    because Envoy resolves the domain independently — a forged SNI pointing to a different IP still
    connects to the real domain, not the attacker's server.
 
-4. **Egress policy engine** — typed rules (`EgressRule`) support domain, IP, and CIDR destinations
+3. **Egress policy engine** — typed rules (`EgressRule`) support domain, IP, and CIDR destinations
    with protocol-specific handling. TLS rules use SNI-based passthrough or MITM inspection.
    SSH and raw TCP rules use per-rule port mapping: each rule gets a dedicated Envoy TCP listener port,
-   and destination-specific iptables DNAT rules in the gateway entrypoint route matching traffic
-   to the correct port. UDP rules use the same per-rule port mapping pattern with dedicated Envoy
-   UDP proxy listeners (sequential from `ENVOY_UDP_PORT_BASE`). Domain resolution happens at
-   container startup via `getent ahostsv4`. Mapping info flows as `OPENCLAW_TCP_MAPPINGS` and
-   `OPENCLAW_UDP_MAPPINGS` env vars (pipe-delimited `dst|dstPort|envoyPort`, semicolon-separated).
-   CIDR destinations are not supported for SSH/TCP/UDP (emit warning). IPs may change after startup
-   requiring container restart.
+   and destination-specific iptables REDIRECT rules in the sidecar entrypoint route matching traffic
+   to the correct port. Domain resolution happens at container startup via `getent ahostsv4`.
+   Mapping info flows as `OPENCLAW_TCP_MAPPINGS` env var (pipe-delimited `dst|dstPort|envoyPort`,
+   semicolon-separated). CIDR destinations are not supported for SSH/TCP (emit warning). IPs may
+   change after startup requiring container restart. **UDP is not proxied through Envoy** — the
+   sidecar's iptables owner-match rules allow only root (containerboot) to send UDP directly.
 
-5. **Malware-blocking DNS** — Envoy runs a DNS listener (:53 UDP) that forwards all DNS queries to
-   Cloudflare's malware-blocking resolvers (1.1.1.2 / 1.0.0.2). These resolvers refuse to resolve
-   known malware, phishing, and command-and-control domains. Docker's embedded DNS cannot forward
-   external queries on `internal: true` networks, so gateway containers use `dns: [172.28.0.2]`
-   (Envoy's static IP) for DNS resolution.
+4. **Malware-blocking DNS** — the sidecar container uses `dns: [1.1.1.2, 1.0.0.2]` (Cloudflare's
+   malware-blocking resolvers). These resolvers refuse to resolve known malware, phishing, and
+   command-and-control domains. All containers inherit this DNS config via shared netns.
 
-No `HTTP_PROXY`/`HTTPS_PROXY` env vars are used. The transparent iptables DNAT captures all
+No `HTTP_PROXY`/`HTTPS_PROXY` env vars are used. The transparent iptables REDIRECT captures all
 outbound TCP regardless of what tool, port, or protocol is used.
 
 **Key invariants (do not weaken):**
 
-- Gateway container must use `capabilities.adds: [NET_ADMIN]` (needed by root during init only).
-- Entrypoint must run as root, set iptables (NAT DNAT + FILTER DROP), then `exec gosu node "$@"` — never skip the drop.
-- Entrypoint must restore `DOCKER_OUTPUT` chain jump after flushing nat OUTPUT (Docker DNS depends on it).
-- Entrypoint must add default route via Envoy (`ip route add default via $ENVOY_IP`) before iptables rules.
-- Entrypoint must derive `INTERNAL_SUBNET` from Envoy's IP and skip DNAT for loopback + internal subnet.
-- Entrypoint NAT table must DNAT all non-local, non-subnet outbound TCP to Envoy's transparent proxy listener.
-- Entrypoint FILTER table must ACCEPT internal subnet traffic (container-to-container, service discovery).
-- Internal network must be `internal: true` with IPAM subnet `172.28.0.0/24`.
-- Envoy must have static IP `172.28.0.2` on the internal network.
-- Gateway containers must use `dns: [172.28.0.2]` (Envoy DNS listener).
-- Envoy is the only container on both internal and egress networks.
+- **Sidecar model**: Tailscale sidecar (`tailscale-<profile>`) owns the network namespace. Gateway and Envoy share it via `network_mode: container:tailscale-<profile>`. Gateway has **no** `CAP_NET_ADMIN`.
+- Sidecar must use `capabilities.adds: [NET_ADMIN]` for iptables.
+- Sidecar entrypoint must run as root, set iptables (NAT REDIRECT + UDP DROP), then `exec containerboot`.
+- Sidecar entrypoint must exclude Envoy (uid 101) and root (uid 0) from REDIRECT via owner-match.
+- Sidecar NAT table must REDIRECT all non-excluded outbound TCP to Envoy's transparent proxy listener (localhost:10000).
+- **UDP exfiltration prevention**: Sidecar must `ACCEPT -p udp -d 127.0.0.11` (Docker DNS), `ACCEPT -p udp -m owner --uid-owner root` (containerboot only), then `DROP -p udp` (all others). The `node` user cannot send UDP.
+- Gateway entrypoint must start sshd, fix permissions, then `exec gosu node "$@"`.
 - All hardcoded domains (infrastructure + AI providers + Homebrew + Tailscale) are always included in the Envoy domain whitelist.
-- Envoy DNS listener must forward to Cloudflare malware-blocking resolvers (1.1.1.2 / 1.0.0.2).
 - SSH/TCP egress rules must each get a dedicated Envoy listener port (sequential from `ENVOY_TCP_PORT_BASE`).
-- SSH/TCP port mappings must be passed to gateway containers via `OPENCLAW_TCP_MAPPINGS` env var.
-- Entrypoint must process `OPENCLAW_TCP_MAPPINGS` to create per-destination iptables DNAT rules before the TLS catch-all.
-- UDP egress rules must each get a dedicated Envoy UDP proxy listener port (sequential from `ENVOY_UDP_PORT_BASE`).
-- UDP port mappings must be passed to gateway containers via `OPENCLAW_UDP_MAPPINGS` env var.
-- Entrypoint must process `OPENCLAW_UDP_MAPPINGS` to create per-destination iptables UDP DNAT rules before the TCP catch-all.
-- TCP/SSH Envoy clusters must use `STRICT_DNS` for domain destinations (with Cloudflare dns_resolvers) and `STATIC` for IP destinations.
-- UDP Envoy clusters must use `STRICT_DNS` for domain destinations (with Cloudflare dns_resolvers) and `STATIC` for IP destinations.
-- Tailscale domains must be enumerated specifically (no `*.tailscale.com` wildcard — would allow attacker-controlled Tailscale networks).
+- SSH/TCP port mappings must be passed to the sidecar via `OPENCLAW_TCP_MAPPINGS` env var.
+- Sidecar entrypoint must process `OPENCLAW_TCP_MAPPINGS` to create per-destination iptables REDIRECT rules before the catch-all.
+- TCP/SSH Envoy clusters must use `STRICT_DNS` for domain destinations and `STATIC` for IP destinations.
+- Tailscale domains use `*.tailscale.com` wildcard in Envoy SNI whitelist. This is safe because UDP exfiltration (the risk from attacker-controlled Tailscale networks) is blocked by the sidecar's iptables owner-match rules — only root (containerboot) can send UDP.
 - Envoy DNS lookup family must be `V4_PREFERRED` (not `AUTO`) — Docker networks are IPv4-only; `AUTO` resolves IPv6 first on dual-stack hosts, causing connection failures.
 - Gateway config must be written to the shared volume _before_ the gateway container starts (ephemeral CLI container: `docker run --rm --network none --user node`).
 - Gateway auth token must be passed via `OPENCLAW_GATEWAY_TOKEN` env var (not config file).
+- Sidecar uses `dns: [1.1.1.2, 1.0.0.2]` (Cloudflare malware-blocking), inherited by all containers.
+- Sidecar uses `TS_SERVE_CONFIG` for Tailscale Serve — no dynamic `tailscale serve` CLI calls.
 
 ## Egress Domain Whitelist
 
@@ -226,13 +232,13 @@ All domains below are hardcoded in `config/domains.ts` and always included. They
 
 - `github.com`, `*.githubusercontent.com`, `ghcr.io`, `formulae.brew.sh`
 
-**Tailscale (control plane + DERP relays — no wildcards):**
+**Tailscale (wildcard — safe because UDP is owner-match restricted):**
 
-- TLS: `tailscale.com`, `login.tailscale.com`, `controlplane.tailscale.com`, `log.tailscale.com`, `derp1–28.tailscale.com`
-- UDP (STUN port 3478): `derp1–28.tailscale.com`
+- TLS: `*.tailscale.com` (covers control plane, login, log, all DERP relays — current and future)
+- TLS: `*.api.letsencrypt.org` (ACME for Tailscale Serve TLS certificates)
 
 User-defined `egressPolicy` rules are **additive** to all hardcoded domains. Duplicates are deduplicated by `mergeEgressPolicy()`.
-Domain filtering uses TLS SNI inspection for TLS traffic and per-destination Envoy UDP proxy listeners for UDP traffic.
+Domain filtering uses TLS SNI inspection for TLS traffic. UDP egress is not proxied through Envoy — the sidecar's iptables owner-match rules restrict UDP to root (containerboot) only.
 
 ## Future Steps
 

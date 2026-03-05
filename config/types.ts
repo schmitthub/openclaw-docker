@@ -47,16 +47,6 @@ export interface TcpPortMapping {
   envoyPort: number;
 }
 
-// Per-rule port mapping for UDP egress (passed to gateway containers)
-export interface UdpPortMapping {
-  /** Destination domain or IP */
-  dst: string;
-  /** Destination port (e.g. 3478 for STUN) */
-  dstPort: number;
-  /** Dedicated Envoy listener port for this mapping */
-  envoyPort: number;
-}
-
 // Full stack configuration
 export interface StackConfig {
   // VPS

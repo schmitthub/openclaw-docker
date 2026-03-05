@@ -77,11 +77,10 @@ const bootstrap = new HostBootstrap("bootstrap", {
   connection: server.connection,
 });
 
-// 3. Deploy egress proxy (Envoy + Docker networks)
+// 3. Render egress config + generate certificates
 const envoy = new EnvoyEgress(
   "envoy",
   {
-    dockerHost: bootstrap.dockerHost,
     egressPolicy,
     connection: server.connection,
   },
@@ -110,7 +109,6 @@ const gatewayInstances = gateways.map((gw) => {
     {
       dockerHost: bootstrap.dockerHost,
       connection: server.connection,
-      internalNetworkName: envoy.internalNetworkName,
       profile: gw.profile,
       version: gw.version,
       port: gw.port,
@@ -121,8 +119,10 @@ const gatewayInstances = gateways.map((gw) => {
       secretEnv,
       auth: { mode: "token", token },
       tcpPortMappings: envoy.tcpPortMappings,
-      udpPortMappings: envoy.udpPortMappings,
       tailscaleAuthKey: tailscaleAuthKey,
+      envoyConfigPath: envoy.envoyConfigPath,
+      envoyConfigHash: envoy.configHash,
+      inspectedDomains: envoy.inspectedDomains,
     },
     { dependsOn: [envoy] },
   );
@@ -132,7 +132,6 @@ const gatewayInstances = gateways.map((gw) => {
 // --- Stack Exports ---
 
 export const serverIp = server.ipAddress;
-export const envoyIp = envoy.envoyIP;
 export const envoyWarnings = envoy.warnings;
 
 // Per-gateway service URLs. The controlUi URL includes the gateway auth token as
@@ -158,9 +157,8 @@ export const gatewayServices = pulumi.secret(
         .all([g.gateway.tailscaleUrl, pulumi.output(g.token)])
         .apply(([url, token]) => ({
           profile: gateways[i].profile,
-          controlUi: `${url}/openclaw?token=${token}`,
-          shell: `${url}/shell`,
-          files: `${url}/files`,
+          controlUi: `${url}?token=${token}`,
+          ssh: `ssh root@${url.replace("https://", "")}`,
         })),
     ),
   ),

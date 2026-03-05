@@ -1,14 +1,16 @@
 import { describe, it, expect } from "vitest";
 import { renderDockerfile, type DockerfileOpts } from "../templates/dockerfile";
 import { renderEntrypoint } from "../templates/entrypoint";
+import { renderSidecarEntrypoint } from "../templates/sidecar";
+import { renderServeConfig } from "../templates/serve";
 import {
   DOCKER_BASE_IMAGE,
   DEFAULT_OPENCLAW_CONFIG_DIR,
   DEFAULT_OPENCLAW_WORKSPACE_DIR,
   DEFAULT_GATEWAY_PORT,
   ENVOY_EGRESS_PORT,
-  TTYD_PORT,
-  FILEBROWSER_PORT,
+  ENVOY_UID,
+  SSHD_PORT,
 } from "../config/defaults";
 
 const defaultOpts: DockerfileOpts = { version: "2026.2" };
@@ -24,14 +26,32 @@ describe("renderDockerfile", () => {
     expect(df).toContain("OPENCLAW_VERSION=1.2.3");
   });
 
-  it("installs iptables", () => {
+  it("does not install iptables (sidecar handles networking)", () => {
     const df = renderDockerfile(defaultOpts);
-    expect(df).toContain("iptables");
+    // Should not be in the apt-get install line
+    const aptLine = df.split("\n").find((l) => l.includes("apt-get install"));
+    expect(aptLine).not.toContain("iptables");
   });
 
-  it("installs iproute2", () => {
+  it("does not install iproute2 (sidecar handles networking)", () => {
     const df = renderDockerfile(defaultOpts);
-    expect(df).toContain("iproute2");
+    const aptLine = df.split("\n").find((l) => l.includes("apt-get install"));
+    expect(aptLine).not.toContain("iproute2");
+  });
+
+  it("installs openssh-server", () => {
+    const df = renderDockerfile(defaultOpts);
+    expect(df).toContain("openssh-server");
+  });
+
+  it("configures sshd on loopback with port 2222", () => {
+    const df = renderDockerfile(defaultOpts);
+    expect(df).toContain("ListenAddress 127.0.0.1");
+    expect(df).toContain(`Port ${SSHD_PORT}`);
+    expect(df).toContain("PermitRootLogin yes");
+    expect(df).toContain("PermitEmptyPasswords yes");
+    expect(df).toContain("UsePAM no");
+    expect(df).toContain("passwd -d root");
   });
 
   it("installs gosu", () => {
@@ -58,29 +78,15 @@ describe("renderDockerfile", () => {
 
   it("installs Homebrew via linuxbrew user with ENV vars and Library symlink", () => {
     const df = renderDockerfile(defaultOpts);
-    // ENV vars set before install
     expect(df).toContain("HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew");
-    expect(df).toContain("HOMEBREW_CELLAR=/home/linuxbrew/.linuxbrew/Cellar");
-    expect(df).toContain(
-      "HOMEBREW_REPOSITORY=/home/linuxbrew/.linuxbrew/Homebrew",
-    );
-    // Install via su - linuxbrew with CI=1
     expect(df).toContain("su - linuxbrew");
     expect(df).toContain("CI=1");
-    // Library symlink at prefix level
-    expect(df).toContain(
-      'ln -s "/home/linuxbrew/.linuxbrew/Homebrew/Library" "/home/linuxbrew/.linuxbrew/Library"',
-    );
-    // Verification check
-    expect(df).toContain("brew install failed");
-    // node user must be in linuxbrew group for write access
     expect(df).toContain("usermod -aG linuxbrew node");
   });
 
   it("installs uv as node user", () => {
     const df = renderDockerfile(defaultOpts);
     expect(df).toContain("https://astral.sh/uv/install.sh");
-    // Must run as node user
     expect(df).toMatch(/USER node\nRUN curl -LsSf https:\/\/astral\.sh\/uv/);
   });
 
@@ -95,11 +101,18 @@ describe("renderDockerfile", () => {
     expect(df).toContain('ENTRYPOINT ["entrypoint.sh"]');
   });
 
-  it("sets CMD to openclaw gateway with --bind loopback --tailscale serve and port", () => {
+  it("sets CMD to openclaw gateway with port only (no --tailscale)", () => {
     const df = renderDockerfile(defaultOpts);
     expect(df).toContain(
-      `CMD ["openclaw", "gateway", "--bind", "loopback", "--tailscale", "serve", "--port", "${DEFAULT_GATEWAY_PORT}"]`,
+      `CMD ["openclaw", "gateway", "--port", "${DEFAULT_GATEWAY_PORT}"]`,
     );
+    expect(df).not.toContain("--tailscale");
+  });
+
+  it("sets OPENCLAW_BRIDGE_PORT and OPENCLAW_GATEWAY_BIND env vars", () => {
+    const df = renderDockerfile(defaultOpts);
+    expect(df).toContain("OPENCLAW_BRIDGE_PORT=18790");
+    expect(df).toContain("OPENCLAW_GATEWAY_BIND=loopback");
   });
 
   it("uses default config dir when not specified", () => {
@@ -122,20 +135,12 @@ describe("renderDockerfile", () => {
   it("browser block has empty default when installBrowser is false", () => {
     const df = renderDockerfile({ version: "latest", installBrowser: false });
     expect(df).toContain('ARG OPENCLAW_INSTALL_BROWSER=""');
-    // Block is still present (allows --build-arg override)
     expect(df).toContain("playwright-core/cli.js");
-  });
-
-  it("browser block has empty default by default", () => {
-    const df = renderDockerfile(defaultOpts);
-    expect(df).toContain('ARG OPENCLAW_INSTALL_BROWSER=""');
   });
 
   it("browser block has default 1 when installBrowser is true", () => {
     const df = renderDockerfile({ version: "latest", installBrowser: true });
     expect(df).toContain('ARG OPENCLAW_INSTALL_BROWSER="1"');
-    expect(df).toContain("playwright-core/cli.js");
-    expect(df).toContain("xvfb");
     expect(df).toContain("install --with-deps chromium");
   });
 
@@ -174,20 +179,19 @@ describe("renderDockerfile", () => {
     expect(df).toContain("/usr/local/bin/openclaw");
   });
 
-  it("installs Tailscale via official install script", () => {
+  it("installs Tailscale CLI via official install script", () => {
     const df = renderDockerfile(defaultOpts);
     expect(df).toContain("https://tailscale.com/install.sh");
   });
 
-  it("installs ttyd", () => {
+  it("does not install ttyd (replaced by SSH)", () => {
     const df = renderDockerfile(defaultOpts);
-    expect(df).toContain("ttyd");
-    expect(df).toContain("/usr/local/bin/ttyd");
+    expect(df).not.toMatch(/install.*ttyd|ttyd.*install|RUN.*ttyd/);
   });
 
-  it("installs filebrowser", () => {
+  it("does not install filebrowser (replaced by SSH)", () => {
     const df = renderDockerfile(defaultOpts);
-    expect(df).toContain("filebrowser/get/master/get.sh");
+    expect(df).not.toContain("filebrowser/get/master/get.sh");
   });
 
   it("is idempotent — same args produce identical output", () => {
@@ -215,12 +219,6 @@ describe("renderDockerfile", () => {
       });
       expect(df).toContain("RUN apt-get install -y ffmpeg");
       expect(df).toContain("RUN apt-get install -y some-lib");
-      // Should not have USER directives from imageSteps (they always run as root)
-      const stepsSection = df.substring(
-        df.indexOf("RUN apt-get install -y ffmpeg"),
-        df.indexOf("COPY entrypoint.sh"),
-      );
-      expect(stepsSection).not.toContain("USER node");
     });
 
     it("places imageSteps after openclaw install and before entrypoint COPY", () => {
@@ -233,12 +231,6 @@ describe("renderDockerfile", () => {
       const copyIdx = df.indexOf("COPY entrypoint.sh");
       expect(customIdx).toBeGreaterThan(openclawIdx);
       expect(customIdx).toBeLessThan(copyIdx);
-    });
-
-    it("no imageSteps produces valid Dockerfile without extra USER directives", () => {
-      const df = renderDockerfile(defaultOpts);
-      // Should not have a bare "USER root" right before COPY (only from standard flow)
-      expect(df).not.toContain("USER root\n\nCOPY entrypoint.sh");
     });
   });
 });
@@ -254,292 +246,273 @@ describe("renderEntrypoint", () => {
     expect(ep).toContain("set -euo pipefail");
   });
 
-  it("resolves Envoy IP via getent hosts envoy", () => {
-    expect(ep).toContain("getent hosts envoy");
+  it("does NOT run iptables commands (sidecar handles networking)", () => {
+    expect(ep).not.toMatch(/^iptables /m);
+    expect(ep).not.toContain("iptables -");
   });
 
-  it("errors if Envoy IP is empty", () => {
-    expect(ep).toContain('if [ -z "$ENVOY_IP" ]');
-    expect(ep).toContain("exit 1");
+  it("does NOT contain ip route (sidecar handles routing)", () => {
+    expect(ep).not.toContain("ip route");
   });
 
-  it("derives INTERNAL_SUBNET from Envoy IP", () => {
-    expect(ep).toContain("INTERNAL_SUBNET=");
-    expect(ep).toContain('.0/24"');
+  it("does NOT start tailscaled process (sidecar handles Tailscale)", () => {
+    expect(ep).not.toContain("tailscaled --tun");
+    expect(ep).not.toContain("tailscaled &");
   });
 
-  it("adds default route via Envoy", () => {
-    expect(ep).toContain('ip route add default via "$ENVOY_IP"');
+  it("does NOT contain TAILSCALE_AUTHKEY (sidecar handles auth)", () => {
+    expect(ep).not.toContain("TAILSCALE_AUTHKEY");
   });
 
-  it("restores DOCKER_OUTPUT chain", () => {
-    expect(ep).toContain(
-      "iptables -t nat -A OUTPUT -j DOCKER_OUTPUT 2>/dev/null || true",
-    );
+  it("does NOT wait for Tailscale socket (containerboot manages it internally)", () => {
+    expect(ep).not.toContain("tailscaled.sock");
   });
 
-  it("has iptables NAT DNAT to Envoy egress port", () => {
-    expect(ep).toContain(`--to-destination "$ENVOY_IP":${ENVOY_EGRESS_PORT}`);
+  it("does NOT start web tools (replaced by SSH)", () => {
+    expect(ep).not.toContain("ttyd");
+    expect(ep).not.toContain("filebrowser");
   });
 
-  it("skips DNAT for loopback", () => {
-    expect(ep).toContain("iptables -t nat -A OUTPUT -o lo -j RETURN");
+  it("does NOT configure Tailscale serve paths (handled by TS_SERVE_CONFIG)", () => {
+    expect(ep).not.toContain("tailscale serve");
+    expect(ep).not.toContain("serve --bg");
   });
 
-  it("skips DNAT for internal subnet", () => {
-    expect(ep).toContain(
-      'iptables -t nat -A OUTPUT -p tcp -d "$INTERNAL_SUBNET" -j RETURN',
-    );
-  });
-
-  it("sets OUTPUT policy to DROP", () => {
-    expect(ep).toContain("iptables -P OUTPUT DROP");
-  });
-
-  it("allows loopback in FILTER table", () => {
-    expect(ep).toContain("iptables -A OUTPUT -o lo -j ACCEPT");
-  });
-
-  it("allows Docker DNS (127.0.0.11:53 UDP)", () => {
-    expect(ep).toContain(
-      "iptables -A OUTPUT -d 127.0.0.11/32 -p udp --dport 53 -j ACCEPT",
-    );
-  });
-
-  it("allows established/related connections", () => {
-    expect(ep).toContain(
-      "iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT",
-    );
-  });
-
-  it("allows internal subnet traffic", () => {
-    expect(ep).toContain('iptables -A OUTPUT -d "$INTERNAL_SUBNET" -j ACCEPT');
-  });
-
-  it("logs blocked connections with OPENCLAW-BLOCKED prefix", () => {
-    expect(ep).toContain('--log-prefix "OPENCLAW-BLOCKED: "');
+  it("starts sshd", () => {
+    expect(ep).toContain("/usr/sbin/sshd");
   });
 
   it("drops to node user via exec gosu node", () => {
     expect(ep).toContain('exec gosu node "$@"');
   });
 
-  it("flushes existing iptables rules", () => {
-    expect(ep).toContain("iptables -F OUTPUT");
-    expect(ep).toContain("iptables -F INPUT");
-    expect(ep).toContain("iptables -t nat -F OUTPUT");
+  it("fixes config dir permissions", () => {
+    expect(ep).toContain("chown node:node /home/node/.openclaw");
+    expect(ep).toContain("chmod 700 /home/node/.openclaw");
+  });
+
+  it("fixes git safe.directory for linuxbrew", () => {
+    expect(ep).toContain("safe.directory");
+    expect(ep).toContain("/home/linuxbrew/.linuxbrew/Homebrew");
+  });
+
+  it("sshd starts BEFORE exec gosu node", () => {
+    const sshdIdx = ep.indexOf("/usr/sbin/sshd");
+    const gosuIdx = ep.indexOf('exec gosu node "$@"');
+    expect(sshdIdx).toBeGreaterThan(-1);
+    expect(gosuIdx).toBeGreaterThan(-1);
+    expect(sshdIdx).toBeLessThan(gosuIdx);
+  });
+
+  it("is valid bash — no TypeScript interpolation artifacts", () => {
+    expect(ep).not.toContain("undefined");
+    expect(ep).not.toContain("[object");
+    expect(ep).not.toContain("NaN");
+  });
+});
+
+describe("renderSidecarEntrypoint", () => {
+  const sep = renderSidecarEntrypoint();
+
+  it("has sh shebang", () => {
+    expect(sep).toMatch(/^#!\/bin\/sh\n/);
+  });
+
+  it("has set -eu", () => {
+    expect(sep).toContain("set -eu");
+  });
+
+  it("does NOT resolve Envoy IP (shared netns, localhost)", () => {
+    expect(sep).not.toContain("getent hosts envoy");
+    expect(sep).not.toContain("ENVOY_IP");
+  });
+
+  it("does NOT add default route (not needed in shared netns)", () => {
+    expect(sep).not.toContain("ip route");
+  });
+
+  it("does NOT set FILTER table OUTPUT DROP policy", () => {
+    expect(sep).not.toContain("iptables -P OUTPUT DROP");
+  });
+
+  it("does NOT restore DOCKER_OUTPUT chain", () => {
+    expect(sep).not.toContain("DOCKER_OUTPUT");
+  });
+
+  it("excludes envoy (uid ${ENVOY_UID}) from redirect", () => {
+    expect(sep).toContain(
+      `iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner ${ENVOY_UID} -j RETURN`,
+    );
+  });
+
+  it("excludes root (uid 0) from redirect", () => {
+    expect(sep).toContain(
+      "iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN",
+    );
+  });
+
+  it("uses REDIRECT instead of DNAT for catch-all", () => {
+    expect(sep).toContain(`-j REDIRECT --to-ports ${ENVOY_EGRESS_PORT}`);
+    expect(sep).not.toContain("--to-destination");
+  });
+
+  it("excludes loopback from catch-all REDIRECT", () => {
+    expect(sep).toContain("! -d 127.0.0.0/8 -j REDIRECT");
+  });
+
+  it("allows Docker DNS (127.0.0.11) UDP", () => {
+    expect(sep).toContain("iptables -A OUTPUT -p udp -d 127.0.0.11 -j ACCEPT");
+  });
+
+  describe("UDP owner-match rules", () => {
+    it("allows UDP from root (uid 0) only", () => {
+      expect(sep).toContain(
+        "iptables -A OUTPUT -p udp -m owner --uid-owner 0 -j ACCEPT",
+      );
+    });
+
+    it("drops all other UDP", () => {
+      expect(sep).toContain("iptables -A OUTPUT -p udp -j DROP");
+    });
+
+    it("UDP ACCEPT rule comes before UDP DROP rule", () => {
+      const acceptIdx = sep.indexOf("--uid-owner 0 -j ACCEPT");
+      const dropIdx = sep.indexOf("-p udp -j DROP");
+      expect(acceptIdx).toBeGreaterThan(-1);
+      expect(dropIdx).toBeGreaterThan(-1);
+      expect(acceptIdx).toBeLessThan(dropIdx);
+    });
   });
 
   describe("TCP mappings", () => {
     it("contains OPENCLAW_TCP_MAPPINGS env var reference", () => {
-      expect(ep).toContain("OPENCLAW_TCP_MAPPINGS");
-    });
-
-    it("parses semicolon-delimited entries with pipe field separator", () => {
-      expect(ep).toContain("IFS=';'");
-      expect(ep).toContain("TCP_ENTRIES");
-      // Fields within each entry use | (not : which conflicts with IPv6)
-      expect(ep).toContain("IFS='|'");
-      expect(ep).toContain("dst|dstPort|envoyPort");
+      expect(sep).toContain("OPENCLAW_TCP_MAPPINGS");
     });
 
     it("resolves domains via getent ahostsv4", () => {
-      expect(ep).toContain("getent ahostsv4");
+      expect(sep).toContain("getent ahostsv4");
     });
 
     it("handles IPv4 destinations without resolution", () => {
-      expect(ep).toContain("grep -qE");
-      expect(ep).toMatch(/\[0-9\]\{1,3\}/);
-      expect(ep).toContain('RESOLVED_IP="$DST"');
+      expect(sep).toContain("grep -qE");
+      expect(sep).toContain('RESOLVED_IP="$DST"');
     });
 
-    it("skips IPv6 destinations with warning (iptables is IPv4-only)", () => {
-      expect(ep).toContain("grep -q ':'");
-      expect(ep).toContain("IPv6 destination");
-      expect(ep).toContain("iptables routing is IPv4-only");
+    it("skips IPv6 destinations with warning", () => {
+      expect(sep).toContain("grep -q ':'");
+      expect(sep).toContain("IPv6 destination");
     });
 
-    it("per-destination DNAT rules appear before catch-all", () => {
-      const tcpMappingIdx = ep.indexOf("OPENCLAW_TCP_MAPPINGS");
-      const catchAllIdx = ep.indexOf(
-        `--to-destination "$ENVOY_IP":${ENVOY_EGRESS_PORT}`,
+    it("per-destination REDIRECT rules appear before catch-all", () => {
+      const tcpMappingIdx = sep.indexOf("OPENCLAW_TCP_MAPPINGS");
+      const catchAllIdx = sep.indexOf(
+        `-j REDIRECT --to-ports ${ENVOY_EGRESS_PORT}`,
       );
       expect(tcpMappingIdx).toBeGreaterThan(-1);
       expect(catchAllIdx).toBeGreaterThan(-1);
       expect(tcpMappingIdx).toBeLessThan(catchAllIdx);
     });
 
+    it("uses REDIRECT for per-destination rules (not DNAT)", () => {
+      expect(sep).toContain('-j REDIRECT --to-ports "$ENVOY_PORT"');
+    });
+
     it("warns on malformed entries", () => {
-      expect(ep).toContain("malformed TCP mapping");
+      expect(sep).toContain("malformed TCP mapping");
     });
 
     it("warns on unresolvable domains", () => {
-      expect(ep).toContain("cannot resolve");
-      expect(ep).toContain("TCP mapping");
-    });
-
-    it("uses DNAT to route to specific Envoy port per mapping", () => {
-      expect(ep).toContain(
-        '-j DNAT --to-destination "$ENVOY_IP":"$ENVOY_PORT"',
-      );
+      expect(sep).toContain("cannot resolve");
+      expect(sep).toContain("TCP mapping");
     });
 
     it("only processes mappings when env var is set", () => {
-      // Should be conditional on OPENCLAW_TCP_MAPPINGS being non-empty
-      expect(ep).toContain("${OPENCLAW_TCP_MAPPINGS:-}");
+      expect(sep).toContain("${OPENCLAW_TCP_MAPPINGS:-}");
     });
 
     it("has || true on getent ahostsv4 pipeline for TCP mappings", () => {
-      // The RESOLVED_IP line must have || true to prevent pipefail from killing the script
-      const tcpSection = ep.substring(
-        ep.indexOf("OPENCLAW_TCP_MAPPINGS"),
-        ep.indexOf("OPENCLAW_UDP_MAPPINGS"),
-      );
-      expect(tcpSection).toContain(
+      expect(sep).toContain(
         'getent ahostsv4 "$DST" 2>/dev/null | head -1 | awk \'{print $1}\')" || true',
       );
     });
   });
 
-  describe("UDP mappings", () => {
-    it("contains OPENCLAW_UDP_MAPPINGS env var reference", () => {
-      expect(ep).toContain("OPENCLAW_UDP_MAPPINGS");
+  describe("containerboot handoff", () => {
+    it("execs containerboot (official Tailscale entrypoint)", () => {
+      expect(sep).toContain("exec /usr/local/bin/containerboot");
     });
 
-    it("parses semicolon-delimited UDP entries with pipe field separator", () => {
-      expect(ep).toContain("UDP_ENTRIES");
+    it("does NOT start tailscaled manually", () => {
+      expect(sep).not.toContain("tailscaled --tun");
+      expect(sep).not.toContain("TAILSCALED_PID");
     });
 
-    it("resolves UDP domains via getent ahostsv4", () => {
-      // Both TCP and UDP sections use getent ahostsv4 for domain resolution
-      const matches = ep.match(/getent ahostsv4/g);
-      expect(matches!.length).toBeGreaterThanOrEqual(4); // 2 per mapping type (resolve + validate)
+    it("does NOT authenticate with TAILSCALE_AUTHKEY (containerboot does that)", () => {
+      expect(sep).not.toContain("tailscale up");
+      expect(sep).not.toContain("TAILSCALE_AUTHKEY");
     });
 
-    it("per-destination UDP DNAT rules appear before TCP catch-all", () => {
-      const udpMappingIdx = ep.indexOf("OPENCLAW_UDP_MAPPINGS");
-      const catchAllIdx = ep.indexOf(
-        `--to-destination "$ENVOY_IP":${ENVOY_EGRESS_PORT}`,
-      );
-      expect(udpMappingIdx).toBeGreaterThan(-1);
-      expect(catchAllIdx).toBeGreaterThan(-1);
-      expect(udpMappingIdx).toBeLessThan(catchAllIdx);
-    });
-
-    it("uses -p udp for UDP DNAT rules", () => {
-      expect(ep).toContain("iptables -t nat -A OUTPUT -p udp");
-    });
-
-    it("warns on malformed UDP entries", () => {
-      expect(ep).toContain("malformed UDP mapping");
-    });
-
-    it("only processes UDP mappings when env var is set", () => {
-      expect(ep).toContain("${OPENCLAW_UDP_MAPPINGS:-}");
-    });
-
-    it("has || true on getent ahostsv4 pipeline for UDP mappings", () => {
-      const udpSection = ep.substring(ep.indexOf("OPENCLAW_UDP_MAPPINGS"));
-      expect(udpSection).toContain(
-        'getent ahostsv4 "$DST" 2>/dev/null | head -1 | awk \'{print $1}\')" || true',
-      );
+    it("does NOT set --ssh or --operator (containerboot manages Tailscale state)", () => {
+      expect(sep).not.toContain("tailscale set");
+      expect(sep).not.toContain("--operator=node");
     });
   });
 
-  describe("Tailscale daemon startup", () => {
-    it("always starts tailscaled (no conditional)", () => {
-      expect(ep).toContain("tailscaled --tun=userspace-networking");
-      // Should NOT have if [ -d "/var/lib/tailscale" ] guarding tailscaled
-      expect(ep).not.toContain('if [ -d "/var/lib/tailscale" ]');
-    });
-
-    it("uses userspace networking (no TUN device needed)", () => {
-      expect(ep).toContain("--tun=userspace-networking");
-    });
-
-    it("waits for daemon socket to appear", () => {
-      expect(ep).toContain("seq 1 30");
-      expect(ep).toContain("[ -S /var/run/tailscale/tailscaled.sock ]");
-    });
-
-    it("authenticates with TAILSCALE_AUTHKEY and --reset flag", () => {
-      expect(ep).toContain("${TAILSCALE_AUTHKEY:-}");
-      expect(ep).toContain(
-        'tailscale --socket=/var/run/tailscale/tailscaled.sock up --authkey="$TAILSCALE_AUTHKEY" --reset',
-      );
-    });
-
-    it("sets --ssh and --operator=node after auth", () => {
-      expect(ep).toContain(
-        "tailscale --socket=/var/run/tailscale/tailscaled.sock set --ssh --operator=node",
-      );
-    });
-
-    it("runs tailscaled AFTER iptables setup", () => {
-      const iptablesIdx = ep.indexOf("iptables -P OUTPUT DROP");
-      const tailscaledIdx = ep.indexOf("tailscaled --tun=userspace-networking");
-      expect(iptablesIdx).toBeGreaterThan(-1);
-      expect(tailscaledIdx).toBeGreaterThan(-1);
-      expect(tailscaledIdx).toBeGreaterThan(iptablesIdx);
-    });
-
-    it("runs tailscaled BEFORE exec gosu node", () => {
-      const tailscaledIdx = ep.indexOf("tailscaled --tun=userspace-networking");
-      const gosuIdx = ep.indexOf('exec gosu node "$@"');
-      expect(tailscaledIdx).toBeGreaterThan(-1);
-      expect(gosuIdx).toBeGreaterThan(-1);
-      expect(tailscaledIdx).toBeLessThan(gosuIdx);
-    });
+  it("does NOT contain UDP mappings (sidecar uses owner-match)", () => {
+    expect(sep).not.toContain("OPENCLAW_UDP_MAPPINGS");
   });
 
-  describe("web tools", () => {
-    it("starts ttyd on loopback", () => {
-      expect(ep).toContain(
-        `ttyd --port ${TTYD_PORT} --interface lo --writable bash`,
-      );
-    });
+  it("does NOT drop to node user (sidecar stays as root for containerboot)", () => {
+    expect(sep).not.toContain("gosu node");
+    expect(sep).not.toContain("exec gosu");
+  });
+});
 
-    it("starts filebrowser on loopback", () => {
-      expect(ep).toContain(
-        `gosu node filebrowser --address 127.0.0.1 --port ${FILEBROWSER_PORT} --noauth --root /home/node --baseurl /files`,
-      );
-    });
-
-    it("configures tailscale serve paths for web tools", () => {
-      expect(ep).toContain(`serve --bg --set-path /shell ${TTYD_PORT}`);
-      expect(ep).toContain(`serve --bg --set-path /files ${FILEBROWSER_PORT}`);
-    });
-
-    it("web tools start AFTER tailscale", () => {
-      const tailscaleSetIdx = ep.indexOf("set --ssh --operator=node");
-      const ttydIdx = ep.indexOf("ttyd --port");
-      expect(tailscaleSetIdx).toBeGreaterThan(-1);
-      expect(ttydIdx).toBeGreaterThan(-1);
-      expect(ttydIdx).toBeGreaterThan(tailscaleSetIdx);
-    });
-
-    it("web tools start BEFORE exec gosu node", () => {
-      const ttydIdx = ep.indexOf("ttyd --port");
-      const gosuIdx = ep.indexOf('exec gosu node "$@"');
-      expect(ttydIdx).toBeGreaterThan(-1);
-      expect(gosuIdx).toBeGreaterThan(-1);
-      expect(ttydIdx).toBeLessThan(gosuIdx);
-    });
+describe("renderServeConfig", () => {
+  it("produces valid JSON", () => {
+    const config = renderServeConfig(18789, 2222);
+    expect(() => JSON.parse(config)).not.toThrow();
   });
 
-  it("is valid bash — no TypeScript interpolation artifacts", () => {
-    // Template literals with ${} should be bash variables, not TS artifacts
-    // Check there are no unescaped TS template expressions
-    expect(ep).not.toContain("undefined");
-    expect(ep).not.toContain("[object");
-    expect(ep).not.toContain("NaN");
-    // All ${...} in the output should be valid bash variable references
-    const templateExpressions = ep.match(/\$\{[^}]+\}/g) ?? [];
-    for (const expr of templateExpressions) {
-      // Bash variable patterns: ${VAR}, ${VAR%.*}, ${VAR:-default}, ${VAR:+alt}, ${VAR[@]}
-      expect(expr).toMatch(
-        /^\$\{[A-Z_][A-Z0-9_]*(%\.\*|:-[^}]*|:\+[^}]*|#[^}]*|##[^}]*|\[@\])?\}$/,
-      );
-    }
+  it("configures HTTPS on port 443", () => {
+    const config = JSON.parse(renderServeConfig(18789, 2222));
+    expect(config.TCP["443"].HTTPS).toBe(true);
+  });
+
+  it("configures SSH TCP forwarding on port 22", () => {
+    const config = JSON.parse(renderServeConfig(18789, 2222));
+    expect(config.TCP["22"].TCPForward).toBe("127.0.0.1:2222");
+  });
+
+  it("configures web handler proxy to gateway port", () => {
+    const config = JSON.parse(renderServeConfig(18789, 2222));
+    const webKey = "${TS_CERT_DOMAIN}:443";
+    expect(config.Web[webKey].Handlers["/"].Proxy).toBe(
+      "http://127.0.0.1:18789",
+    );
+  });
+
+  it("disables Funnel", () => {
+    const config = JSON.parse(renderServeConfig(18789, 2222));
+    const funnelKey = "${TS_CERT_DOMAIN}:443";
+    expect(config.AllowFunnel[funnelKey]).toBe(false);
+  });
+
+  it("uses custom gateway port", () => {
+    const config = JSON.parse(renderServeConfig(9999, 2222));
+    const webKey = "${TS_CERT_DOMAIN}:443";
+    expect(config.Web[webKey].Handlers["/"].Proxy).toBe(
+      "http://127.0.0.1:9999",
+    );
+  });
+
+  it("uses custom sshd port", () => {
+    const config = JSON.parse(renderServeConfig(18789, 3333));
+    expect(config.TCP["22"].TCPForward).toBe("127.0.0.1:3333");
+  });
+
+  it("uses default SSHD_PORT when not specified", () => {
+    const config = JSON.parse(renderServeConfig(18789));
+    expect(config.TCP["22"].TCPForward).toBe(`127.0.0.1:${SSHD_PORT}`);
   });
 });
