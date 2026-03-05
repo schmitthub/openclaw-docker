@@ -30,7 +30,9 @@ export class HostBootstrap extends pulumi.ComponentResource {
           // Allow Pulumi's SSH client to pass env vars to remote commands.
           // Secrets are passed via the `environment` property on command.remote.Command
           // instead of embedding them in command strings (which Pulumi logs on error).
-          "grep -q '^AcceptEnv \\*' /etc/ssh/sshd_config || (echo 'AcceptEnv *' >> /etc/ssh/sshd_config && systemctl reload sshd)",
+          // Uses sshd_config.d/ to ensure global scope — appending to sshd_config can
+          // land inside a Match block (from cloud-init or included configs).
+          "echo 'AcceptEnv *' > /etc/ssh/sshd_config.d/99-accept-env.conf && systemctl reload sshd",
           "systemctl enable fail2ban",
           "systemctl start fail2ban",
         ].join(" && "),
