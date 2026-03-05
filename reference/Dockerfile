@@ -29,7 +29,8 @@ RUN mkdir -p /run/sshd && \
   chown root:root /usr/bin/ssh && \
   chmod 700 /usr/bin/ssh && \
   ssh-keygen -A && \
-  passwd -d root
+  passwd -d root && \
+  passwd -d node
 
 
 # Install Bun (required for build scripts).
