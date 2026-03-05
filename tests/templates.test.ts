@@ -133,16 +133,18 @@ describe("renderDockerfile", () => {
     expect(df).toContain(`OPENCLAW_GATEWAY_PORT=${DEFAULT_GATEWAY_PORT}`);
   });
 
-  it("browser block has empty default when installBrowser is false", () => {
+  it("does not include browser block when installBrowser is false", () => {
     const df = renderDockerfile({ version: "latest", installBrowser: false });
-    expect(df).toContain('ARG OPENCLAW_INSTALL_BROWSER=""');
-    expect(df).toContain("playwright-core/cli.js");
+    expect(df).not.toContain(
+      "apt-get install -y --no-install-recommends chromium",
+    );
   });
 
-  it("browser block has default 1 when installBrowser is true", () => {
+  it("installs chromium and xvfb when installBrowser is true", () => {
     const df = renderDockerfile({ version: "latest", installBrowser: true });
-    expect(df).toContain('ARG OPENCLAW_INSTALL_BROWSER="1"');
-    expect(df).toContain("install --with-deps chromium");
+    expect(df).toContain(
+      "apt-get install -y --no-install-recommends chromium xvfb",
+    );
   });
 
   it("respects custom config dir", () => {

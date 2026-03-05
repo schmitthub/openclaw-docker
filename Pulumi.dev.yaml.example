@@ -19,6 +19,7 @@ config:
     - profile: dev
       version: latest
       port: 18789
+      # installBrowser: true  # Installs Chromium + Xvfb; auto-sets browser.headless & browser.noSandbox
       setupCommands:
         - >-
           onboard --non-interactive --accept-risk

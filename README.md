@@ -182,15 +182,15 @@ Configuration lives in `Pulumi.<stack>.yaml`. See `Pulumi.dev.yaml.example` for 
 
 **Gateway profile fields:**
 
-| Field            | Type        | Description                                                     |
-| ---------------- | ----------- | --------------------------------------------------------------- |
-| `profile`        | string      | Unique name (used in resource names)                            |
-| `version`        | string      | OpenClaw version (`latest` or semver)                           |
-| `port`           | number      | Gateway port (e.g. `18789`)                                     |
-| `installBrowser` | boolean     | Bake Playwright + Chromium (~300MB)                             |
-| `imageSteps`     | ImageStep[] | Custom Dockerfile RUN instructions (`{run}` pairs, always root) |
-| `setupCommands`  | string[]    | OpenClaw subcommands run in init container (e.g. `onboard`)     |
-| `env`            | object      | Extra environment variables                                     |
+| Field            | Type        | Description                                                                   |
+| ---------------- | ----------- | ----------------------------------------------------------------------------- |
+| `profile`        | string      | Unique name (used in resource names)                                          |
+| `version`        | string      | OpenClaw version (`latest` or semver)                                         |
+| `port`           | number      | Gateway port (e.g. `18789`)                                                   |
+| `installBrowser` | boolean     | Install Chromium + Xvfb; auto-sets `browser.headless` and `browser.noSandbox` |
+| `imageSteps`     | ImageStep[] | Custom Dockerfile RUN instructions (`{run}` pairs, always root)               |
+| `setupCommands`  | string[]    | OpenClaw subcommands run in init container (e.g. `onboard`)                   |
+| `env`            | object      | Extra environment variables                                                   |
 
 ## Component Hierarchy
 
