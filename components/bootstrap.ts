@@ -22,7 +22,7 @@ export class HostBootstrap extends pulumi.ComponentResource {
       {
         connection: args.connection,
         create: [
-          "curl -fsSL https://get.docker.com | sh",
+          "command -v docker >/dev/null 2>&1 || (curl -fsSL https://get.docker.com | sh)",
           "systemctl enable docker",
           "systemctl start docker",
           "docker --version",

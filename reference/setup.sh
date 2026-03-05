@@ -23,7 +23,7 @@ if [[ -f "$ROOT_DIR/../.env" ]]; then
 fi
 
 echo ""
-echo "==> Starting Envory and Tailscale"
+echo "==> Starting Envoy and Tailscale"
 
 docker compose -f "$COMPOSE_FILE" up -d envoy tailscale-sidecar
 

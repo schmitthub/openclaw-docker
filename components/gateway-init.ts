@@ -177,6 +177,10 @@ function buildInitCommand(opts: {
   environment: pulumi.Output<Record<string, string>>;
 } {
   const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  const RESERVED_KEYS = new Set([
+    "OPENCLAW_GATEWAY_TOKEN",
+    "TAILSCALE_SERVE_HOST",
+  ]);
 
   // Build the environment map (secret values — passed via SSH AcceptEnv)
   const environment = pulumi
@@ -202,19 +206,26 @@ function buildInitCommand(opts: {
       }
 
       const env: Record<string, string> = {};
-      if (opts.needsToken && token) {
-        env["OPENCLAW_GATEWAY_TOKEN"] = token;
-      }
-      if (opts.needsHostname && hostname) {
-        env["TAILSCALE_SERVE_HOST"] = hostname;
-      }
       for (const [k, v] of Object.entries(secrets)) {
         if (!ENV_KEY_RE.test(k)) {
           throw new Error(
             `Invalid env var key "${k}" in gatewaySecretEnv-${opts.profile}. Keys must match /^[A-Za-z_][A-Za-z0-9_]*$/`,
           );
         }
+        if (RESERVED_KEYS.has(k)) {
+          pulumi.log.warn(
+            `Skipping reserved env var "${k}" in gatewaySecretEnv-${opts.profile} — this key is managed by Pulumi`,
+          );
+          continue;
+        }
         env[k] = v;
+      }
+      // Reserved keys written after secretEnv so they cannot be overridden
+      if (opts.needsToken && token) {
+        env["OPENCLAW_GATEWAY_TOKEN"] = token;
+      }
+      if (opts.needsHostname && hostname) {
+        env["TAILSCALE_SERVE_HOST"] = hostname;
       }
       return env;
     });

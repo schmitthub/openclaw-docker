@@ -3,14 +3,14 @@
 # Envoy egress-only proxy: transparent TLS proxy.
 # Ingress is handled by Tailscale (no ingress listener here).
 # Egress uses TLS Inspector + SNI-based domain whitelist. No MITM / TLS termination.
-# All outbound TCP from the sidecar/gateway is DNAT'd here by iptables in sidecar-entrypoint.sh.
+# All outbound TCP from the sidecar/gateway is redirected here by iptables in sidecar-entrypoint.sh.
 # UDP is NOT proxied — the sidecar's iptables owner-match rules restrict UDP to root (tailscaled) only.
 # Restart after editing: docker restart envoy
 
 static_resources:
   listeners:
     # Egress: transparent TLS proxy with SNI-based domain whitelist.
-    # All outbound TCP from the gateway is DNAT'd here by iptables.
+    # All outbound TCP from the gateway is redirected here by iptables.
     # TLS Inspector reads SNI from ClientHello.
     # Whitelisted SNI -> forwarded. Everything else -> connection refused.
     - name: egress
