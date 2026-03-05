@@ -89,30 +89,6 @@ docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli onboard \
   --skip-health
 
 echo ""
-echo "==> Setting security config"
-# Workaround: non-interactive onboard doesn't seed tailnet hostnames into the
-# controlUi allowedOrigins list. This flag makes the gateway accept the Host
-# header as origin instead. https://github.com/openclaw/openclaw/issues/27877
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback true >/dev/null
-# Auth strategy for headless Tailscale Serve + IaC (no manual pairing):
-#
-#   auth.mode = token              — gateway validates tokens (set by --gateway-token during onboard)
-#   auth.allowTailscale = false    — prevents Tailscale header auth from short-circuiting the token
-#                                    check. Without this, Tailscale auth fires first (method: "tailscale"),
-#                                    sharedAuthOk stays false, and device identity/pairing checks fail.
-#                                    (src/gateway/auth.ts:424-434)
-#   dangerouslyDisableDeviceAuth   — bypasses device identity + pairing when sharedAuthOk=true.
-#                                    Safe because Tailscale provides network-level auth; the token is
-#                                    defense-in-depth. (src/gateway/server/ws-connection/connect-policy.ts)
-#
-# Result:
-#   Control UI: user enters gateway token once in browser (stored in localStorage).
-#               Tailscale still provides network-level security (only tailnet can reach gateway).
-#   CLI:        picks up OPENCLAW_GATEWAY_TOKEN env var automatically.
-#
-
-echo ""
 echo "==> Waiting for tailscale config"
 TAILSCALE_SERVE_JSON=""
 TAILSCALE_SERVE_HOST=""
@@ -138,6 +114,8 @@ else
   echo "WARN: Could not extract Tailscale Serve host from tailscale serve status after $TAILSCALE_SERVE_MAX_RETRIES attempts" >&2
 fi
 
+echo ""
+echo "==> Setting security config"
 docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
     config set gateway.controlUi.allowedOrigins \
     "[\"https://${TAILSCALE_SERVE_HOST}\", \"http://localhost:18789\", \"http://127.0.0.1:18789\"]"
@@ -153,73 +131,54 @@ docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
 docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
   config set gateway.trustedProxies "[\"127.0.0.1/8\"]" >/dev/null
 
-# echo ""
-# echo "==> Setting control UI base path"
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#     config set gateway.controlUi.basePath /openclaw
+echo ""
+echo "==> Setting pnpm as node manager"
+# has to be done here if --skip-skills is used during onboarding
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set skills.install.nodeManager pnpm
 
-# echo ""
-# echo "==> Setting pnpm as node manager"
-# # has to be done here if --skip-skills is used during onboarding
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set skills.install.nodeManager pnpm
+echo ""
+echo "==> Setting memory search config"
+# Use the "openai" provider (OpenAI-compatible API)
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set agents.defaults.memorySearch.provider openai
+# Point it at OpenRouter's base URL
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set agents.defaults.memorySearch.remote.baseUrl "https://openrouter.ai/api/v1"
+# Set your OpenRouter API key for embeddings
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set agents.defaults.memorySearch.remote.apiKey '{"source":"env","provider":"default","id":"OPENROUTER_API_KEY"}'
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set agents.defaults.memorySearch.model "openai/text-embedding-3-small"
 
-# echo ""
-# echo "==> Setting memory search config"
-# # Use the "openai" provider (OpenAI-compatible API)
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set agents.defaults.memorySearch.provider openai
-# # Point it at OpenRouter's base URL
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set agents.defaults.memorySearch.remote.baseUrl "https://openrouter.ai/api/v1"
-# # Set your OpenRouter API key for embeddings
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set agents.defaults.memorySearch.remote.apiKey '{"source":"env","provider":"default","id":"OPENROUTER_API_KEY"}'
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set agents.defaults.memorySearch.model "openai/text-embedding-3-small"
+echo ""
+echo "==> Setting web search config"
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set tools.web.search.provider brave
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set tools.web.search.apiKey '{"source":"env","provider":"default","id":"BRAVE_API_KEY"}'
 
-# echo ""
-# echo "==> Setting web search config"
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set tools.web.search.provider brave
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set tools.web.search.apiKey '{"source":"env","provider":"default","id":"BRAVE_API_KEY"}'
-
-# echo ""
-# echo "==> Setting Discord config"
-# if [[ -z "${DISCORD_BOT_TOKEN:-}" ]] || [[ -z "${DISCORD_USER_ID:-}" ]] || [[ -z "${DISCORD_SERVER_ID:-}" ]]; then
-#   echo "WARN: Skipping Discord config — DISCORD_BOT_TOKEN, DISCORD_USER_ID, or DISCORD_SERVER_ID not set" >&2
-# else
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set channels.discord.token '{"source":"env","provider":"default","id":"DISCORD_BOT_TOKEN"}'
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set channels.discord.allowFrom "[\"$DISCORD_USER_ID\"]"
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set channels.discord.dmPolicy allowlist
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set channels.discord.groupPolicy allowlist
-# docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-#   config set channels.discord.guilds "{\"$DISCORD_SERVER_ID\": {\"users\": [\"$DISCORD_USER_ID\"], \"requireMention\": false}}"
-# fi
+echo ""
+echo "==> Setting Discord config"
+if [[ -z "${DISCORD_BOT_TOKEN:-}" ]] || [[ -z "${DISCORD_USER_ID:-}" ]] || [[ -z "${DISCORD_SERVER_ID:-}" ]]; then
+  echo "WARN: Skipping Discord config — DISCORD_BOT_TOKEN, DISCORD_USER_ID, or DISCORD_SERVER_ID not set" >&2
+else
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set channels.discord.token '{"source":"env","provider":"default","id":"DISCORD_BOT_TOKEN"}'
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set channels.discord.allowFrom "[\"$DISCORD_USER_ID\"]"
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set channels.discord.dmPolicy allowlist
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set channels.discord.groupPolicy allowlist
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set channels.discord.guilds "{\"$DISCORD_SERVER_ID\": {\"users\": [\"$DISCORD_USER_ID\"], \"requireMention\": false}}"
+fi
 
 echo ""
 echo "==> Starting Stack"
 docker compose "${COMPOSE_ARGS[@]}" up openclaw-gateway -d --build
 
-# echo ""
-# echo "==> Waiting for Tailscale to authenticate..."
-# TS_HOSTNAME=""
-# for i in $(seq 1 60); do
-#   TS_HOSTNAME="$(docker compose "${COMPOSE_ARGS[@]}" exec -T tailscale-sidecar \
-#     tailscale --socket=/var/run/tailscale/tailscaled.sock status --json 2>/dev/null \
-#     | jq -r '.Self.DNSName' 2>/dev/null | sed 's/\.$//')" || true
-#   [[ -n "$TS_HOSTNAME" && "$TS_HOSTNAME" != "null" ]] && break
-#   sleep 2
-# done
-
 echo ""
 echo "Gateway running — Tailscale Serve URLs:"
 echo "  https://${TAILSCALE_SERVE_HOST}#token=$OPENCLAW_GATEWAY_TOKEN  (Control UI)"
-# echo "  https://${TS_HOSTNAME}/shell     (Web Terminal)"
-# echo "  https://${TS_HOSTNAME}/files     (File Browser)"
-

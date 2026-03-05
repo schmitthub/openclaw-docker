@@ -70,16 +70,6 @@ RUN echo 'export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH' >> /home/node/.bashr
     echo 'export HOMEBREW_REPOSITORY=/home/linuxbrew/.linuxbrew/Homebrew' >> /home/node/.bashrc
 USER root
 
-# Install Tailscale CLI (used for 'tailscale serve' path configuration).
-# tailscaled runs in the sidecar container, not here.
-RUN curl -fsSL https://tailscale.com/install.sh | sh
-
-# Install ttyd (web terminal) and filebrowser (web file manager).
-RUN TTYD_ARCH=$(uname -m) && \
-    curl -fsSL "https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.${TTYD_ARCH}" -o /usr/local/bin/ttyd && \
-    chmod 755 /usr/local/bin/ttyd && \
-    curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
-
 WORKDIR /app
 RUN chown node:node /app
 
@@ -117,7 +107,6 @@ RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
       apt-get clean && \
       rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
-
 
 # Ensure node owns everything in its home directory (catches root-created
 # files from Playwright, npm, uv, etc. that would break runtime writes).
