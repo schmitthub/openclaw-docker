@@ -8,32 +8,27 @@ import {
 } from "../config";
 
 export interface GatewayArgs {
-  /** Docker host URI, e.g. "ssh://root@<ip>" */
   dockerHost: pulumi.Input<string>;
-  /** Unique name for this gateway instance */
   profile: string;
-  /** Host port for the gateway */
   port: number;
-  /** Docker image tag for the gateway (from GatewayImage) */
   imageName: pulumi.Input<string>;
-  /** Sidecar container name for network_mode (from TailscaleSidecar) */
   sidecarContainerName: pulumi.Input<string>;
-  /** Tailscale hostname (from TailscaleSidecar) */
   tailscaleHostname: pulumi.Input<string>;
-  /** Additional env vars for the container */
   env?: Record<string, string>;
-  /** Secret env vars (JSON string: {"KEY":"value",...}) for the main container */
   secretEnv?: pulumi.Input<string>;
-  /** Auth configuration for this gateway */
   auth: { mode: "token"; token: pulumi.Input<string> };
-  /** Content hash of init commands (forces container replacement when setup changes) */
   initHash: string;
 }
 
+const RESERVED_ENV_KEYS = new Set([
+  "OPENCLAW_GATEWAY_TOKEN",
+  "TS_AUTHKEY",
+  "TS_SOCKET",
+  "OPENCLAW_TCP_MAPPINGS",
+]);
+
 export class Gateway extends pulumi.ComponentResource {
-  /** Docker container ID */
   public readonly containerId: pulumi.Output<string>;
-  /** Tailscale hostname URL */
   public readonly tailscaleUrl: pulumi.Output<string>;
 
   constructor(
@@ -45,18 +40,12 @@ export class Gateway extends pulumi.ComponentResource {
 
     const dDir = dataDir(args.profile);
 
-    // Docker provider connected to the remote host
     const dockerProvider = new docker.Provider(
       `${name}-docker`,
       { host: args.dockerHost },
       { parent: this },
     );
 
-    const imageName = args.imageName;
-    const sidecarName = args.sidecarContainerName;
-    const containerName = `openclaw-gateway-${args.profile}`;
-
-    // Named Docker volumes for home and linuxbrew
     const homeVolume = new docker.Volume(
       `${name}-home`,
       { name: `openclaw-home-${args.profile}` },
@@ -68,118 +57,62 @@ export class Gateway extends pulumi.ComponentResource {
       { parent: this, provider: dockerProvider },
     );
 
-    // Build env vars list
+    // Base env vars + user-defined env
     const envs: pulumi.Input<string>[] = [
       `HOME=/home/node`,
       `TERM=xterm-256color`,
       `NODE_EXTRA_CA_CERTS=${ENVOY_CA_CERT_PATH}`,
+      pulumi.interpolate`OPENCLAW_GATEWAY_TOKEN=${args.auth.token}`,
+      ...Object.entries(args.env ?? {}).map(([k, v]) => `${k}=${v}`),
     ];
 
-    // Auth token via env var
-    envs.push(pulumi.interpolate`OPENCLAW_GATEWAY_TOKEN=${args.auth.token}`);
-
-    for (const [k, v] of Object.entries(args.env ?? {})) {
-      envs.push(`${k}=${v}`);
-    }
-
-    // Merge secret env vars into the container's envs
-    const secretEnvParsed = pulumi.output(args.secretEnv ?? "{}").apply((s) => {
-      try {
-        return JSON.parse(s) as Record<string, string>;
-      } catch (e) {
-        const detail = e instanceof Error ? e.message : String(e);
-        throw new Error(
-          `Invalid JSON in gatewaySecretEnv-${args.profile}: ${detail}. Expected {"KEY":"value",...}`,
-          { cause: e },
-        );
-      }
-    });
-
-    // Filter out reserved env vars that are managed by this component
-    const RESERVED_ENV_KEYS = new Set([
-      "OPENCLAW_GATEWAY_TOKEN",
-      "TS_AUTHKEY",
-      "TS_SOCKET",
-      "OPENCLAW_TCP_MAPPINGS",
-    ]);
-
-    // Warn at plan time if secretEnv contains reserved keys
-    pulumi.output(args.secretEnv ?? "{}").apply((s) => {
-      let parsed: Record<string, string>;
-      try {
-        parsed = JSON.parse(s) as Record<string, string>;
-      } catch (e) {
-        if (!(e instanceof SyntaxError)) {
-          pulumi.log.warn(
-            `Unexpected error checking secretEnv for reserved keys: ${e}`,
-            this,
+    // Parse secretEnv JSON, filter reserved keys, warn on conflicts
+    const computedEnvs = pulumi
+      .all([pulumi.all(envs), pulumi.output(args.secretEnv ?? "{}")])
+      .apply(([baseEnvs, secretJson]) => {
+        let secrets: Record<string, string>;
+        try {
+          secrets = JSON.parse(secretJson) as Record<string, string>;
+        } catch (e) {
+          const detail = e instanceof Error ? e.message : String(e);
+          throw new Error(
+            `Invalid JSON in gatewaySecretEnv-${args.profile}: ${detail}. Expected {"KEY":"value",...}`,
+            { cause: e },
           );
         }
-        return;
-      }
-      const conflicts = Object.keys(parsed).filter((k) =>
-        RESERVED_ENV_KEYS.has(k),
-      );
-      if (conflicts.length > 0) {
-        pulumi.log.warn(
-          `gatewaySecretEnv-${args.profile} contains reserved key(s) that will be ignored: ${conflicts.join(", ")}`,
-          this,
+        const conflicts = Object.keys(secrets).filter((k) =>
+          RESERVED_ENV_KEYS.has(k),
         );
-      }
-    });
-
-    const computedEnvs = pulumi
-      .all([pulumi.all(envs), secretEnvParsed])
-      .apply(([baseEnvs, secrets]) => [
-        ...baseEnvs,
-        ...Object.entries(secrets)
-          .filter(([k]) => !RESERVED_ENV_KEYS.has(k))
-          .map(([k, v]) => `${k}=${v}`),
-      ]);
-
-    // Build volumes list
-    const volumes: docker.types.input.ContainerVolume[] = [
-      {
-        volumeName: homeVolume.name,
-        containerPath: "/home/node",
-      },
-      {
-        volumeName: linuxbrewVolume.name,
-        containerPath: "/home/linuxbrew/.linuxbrew",
-      },
-      {
-        hostPath: `${dDir}/config`,
-        containerPath: DEFAULT_OPENCLAW_CONFIG_DIR,
-      },
-      {
-        hostPath: `${dDir}/workspace`,
-        containerPath: DEFAULT_OPENCLAW_WORKSPACE_DIR,
-      },
-      {
-        hostPath: ENVOY_CA_CERT_PATH,
-        containerPath: ENVOY_CA_CERT_PATH,
-        readOnly: true,
-      },
-    ];
-
-    // Container command overrides Dockerfile CMD
-    const containerCommand = ["openclaw", "gateway", "--port", `${args.port}`];
+        if (conflicts.length > 0) {
+          pulumi.log.warn(
+            `gatewaySecretEnv-${args.profile} contains reserved key(s) that will be ignored: ${conflicts.join(", ")}`,
+          );
+        }
+        return [
+          ...baseEnvs,
+          ...Object.entries(secrets)
+            .filter(([k]) => !RESERVED_ENV_KEYS.has(k))
+            .map(([k, v]) => `${k}=${v}`),
+        ];
+      });
 
     const container = new docker.Container(
       `${name}-container`,
       {
-        name: containerName,
-        image: imageName,
+        name: `openclaw-gateway-${args.profile}`,
+        image: args.imageName,
         restart: "unless-stopped",
         init: true,
-        networkMode: pulumi.interpolate`container:${sidecarName}`,
-        sysctls: {
-          "net.ipv4.tcp_keepalive_time": "60",
-          "net.ipv4.tcp_keepalive_intvl": "10",
-          "net.ipv4.tcp_keepalive_probes": "3",
-        },
+        networkMode: pulumi.interpolate`container:${args.sidecarContainerName}`,
         envs: computedEnvs,
-        command: containerCommand,
+        command: [
+          "openclaw",
+          "gateway",
+          "--bind",
+          "loopback",
+          "--port",
+          `${args.port}`,
+        ],
         healthcheck: {
           tests: [
             "CMD",
@@ -192,7 +125,26 @@ export class Gateway extends pulumi.ComponentResource {
           retries: 5,
           startPeriod: "20s",
         },
-        volumes,
+        volumes: [
+          { volumeName: homeVolume.name, containerPath: "/home/node" },
+          {
+            volumeName: linuxbrewVolume.name,
+            containerPath: "/home/linuxbrew/.linuxbrew",
+          },
+          {
+            hostPath: `${dDir}/config`,
+            containerPath: DEFAULT_OPENCLAW_CONFIG_DIR,
+          },
+          {
+            hostPath: `${dDir}/workspace`,
+            containerPath: DEFAULT_OPENCLAW_WORKSPACE_DIR,
+          },
+          {
+            hostPath: ENVOY_CA_CERT_PATH,
+            containerPath: ENVOY_CA_CERT_PATH,
+            readOnly: true,
+          },
+        ],
         labels: [{ label: "openclaw.init-hash", value: args.initHash }],
       },
       {
