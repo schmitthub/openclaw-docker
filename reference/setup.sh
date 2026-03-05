@@ -132,6 +132,13 @@ docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
   config set gateway.trustedProxies "[\"127.0.0.1/8\"]" >/dev/null
 
 echo ""
+echo "==> Setting browser config"
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set browser.headless true >/dev/null
+docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+  config set browser.noSandbox true >/dev/null
+
+echo ""
 echo "==> Setting pnpm as node manager"
 # has to be done here if --skip-skills is used during onboarding
 docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \

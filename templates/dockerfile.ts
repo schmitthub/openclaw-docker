@@ -124,8 +124,7 @@ RUN SHARP_IGNORE_GLOBAL_LIBVIPS=1 NODE_OPTIONS=--max-old-space-size=2048 \\
 RUN ln -sf "$(npm root -g)/openclaw/dist/entry.js" /usr/local/bin/openclaw && \\
     chmod 755 "$(npm root -g)/openclaw/dist/entry.js"
 
-# Optional: bake Playwright + Chromium into the image for browser automation.
-# Adds ~300MB but eliminates the 60-90s Playwright install on every container start.
+# Optional: install Chromium + Xvfb for browser automation.
 ${renderBrowserBlock(opts.installBrowser ?? false)}
 ${renderImageSteps(opts.imageSteps ?? [])}# Ensure node owns everything in its home directory (catches root-created
 # files from Playwright, npm, uv, etc. that would break runtime writes).
@@ -150,18 +149,11 @@ CMD ["openclaw", "gateway", "--port", "${gatewayPort}"]
 }
 
 function renderBrowserBlock(installBrowser: boolean): string {
-  const defaultVal = installBrowser ? "1" : "";
-  return `ARG OPENCLAW_INSTALL_BROWSER="${defaultVal}"
-RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \\
-      apt-get update && \\
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \\
-      mkdir -p /home/node/.cache/ms-playwright && \\
-      PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \\
-      node "$(npm root -g)/openclaw/node_modules/playwright-core/cli.js" install --with-deps chromium && \\
-      chown -R node:node /home/node/.cache/ms-playwright && \\
-      apt-get clean && \\
-      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \\
-    fi
+  if (!installBrowser) return "";
+  return `RUN apt-get update && \\
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends chromium xvfb && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 `;
 }

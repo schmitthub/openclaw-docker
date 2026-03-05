@@ -7,12 +7,32 @@
 
 Pulumi TypeScript IaC that provisions remote VPS hosts and deploys [OpenClaw](https://openclaw.ai) gateway fleets with network-level egress isolation via Envoy proxy and Tailscale networking.
 
+What this gets you above the official sandboxed docker compose offering:
+
+- One-click deployment of OpenClaw to an actual low cost VPS gateway on Hetzner, DigitalOcean, or Oracle Cloud
+- Tailscale sidecar for secure access and TLS certificate management (no reverse proxy or manual certs needed)
+- Envoy sidecar for egress filtering (aka firewall) with a structured policy engine (blocks unauthorized exfiltration)
+
 > Early development — features and conventions may change. Contributions and feedback welcome!
 
 ## Table of Contents
 
 - [openclaw-deploy](#openclaw-deploy)
   - [Table of Contents](#table-of-contents)
+  - [Try it: Deploy OpenClaw with Telegram and Private Discord server access](#try-it-deploy-openclaw-with-telegram-and-private-discord-server-access)
+    - [1) Create your `.env` file](#1-create-your-env-file)
+    - [2) Register accounts and create API credentials](#2-register-accounts-and-create-api-credentials)
+      - [OpenRouter](#openrouter)
+      - [Tailscale](#tailscale)
+      - [Hetzner Cloud](#hetzner-cloud)
+      - [Discord](#discord)
+      - [Telegram](#telegram)
+      - [Brave Search API](#brave-search-api)
+      - [Pulumi](#pulumi)
+    - [3) Set up and initialize the Pulumi stack](#3-set-up-and-initialize-the-pulumi-stack)
+    - [4) Set provider and secret config in Pulumi](#4-set-provider-and-secret-config-in-pulumi)
+    - [5) Deploy and verify](#5-deploy-and-verify)
+    - [6) Post-deploy operational notes](#6-post-deploy-operational-notes)
   - [Architecture](#architecture)
   - [Threat Model](#threat-model)
   - [Prerequisites](#prerequisites)
@@ -21,16 +41,201 @@ Pulumi TypeScript IaC that provisions remote VPS hosts and deploys [OpenClaw](ht
   - [Component Hierarchy](#component-hierarchy)
   - [Egress Domain Whitelist](#egress-domain-whitelist)
   - [Experimental Runtime Binary Persistence](#experimental-runtime-binary-persistence)
-  - [Try it: Deploy OpenClaw with private Discord server access](#try-it-deploy-openclaw-with-private-discord-server-access)
-    - [1) Register accounts and create API credentials](#1-register-accounts-and-create-api-credentials)
-    - [2) Prepare your Pulumi stack](#2-prepare-your-pulumi-stack)
-    - [3) Set provider + secret config in Pulumi](#3-set-provider--secret-config-in-pulumi)
-    - [4) Stack config shape (sanitized example)](#4-stack-config-shape-sanitized-example)
-    - [5) Deploy and verify](#5-deploy-and-verify)
-    - [6) Post-deploy operational notes](#6-post-deploy-operational-notes)
-  - [Common Operations](#common-operations)
-  - [Development](#development)
-  - [Repository Structure](#repository-structure)
+
+## Try it: Deploy OpenClaw with Telegram and Private Discord server access
+
+This is an end-to-end setup guide for deploying a personal OpenClaw gateway with Telegram and private Discord access. Hetzner is the most tested provider in this repo (and cheap, roughly $4/month); DigitalOcean and OCI support exist but are less battle-tested here.
+
+OpenClaw setup is a nightmare and after 20+ years in tech it was the most painful buggy nonsensical frustrating experience I've had to date... so hopefully my work adds the years back onto your life that I lost from the stress of figuring it out.
+
+If you want additional OpenClaw onboarding tips after deployment, this guide is useful:
+<https://amankhan1.substack.com/p/how-to-make-your-openclaw-agent-useful>
+
+A good first prompt to your agent is:
+
+- "Hey, let's get you set up. Read BOOTSTRAP.md and walk me through it."
+- "When I ask questions in Discord channels, use memory_search or memory_get if you need long-term context from MEMORY.md."
+
+OpenClaw platform references:
+
+- Hetzner (tested, recommended): <https://docs.openclaw.ai/install/hetzner>
+- DigitalOcean (untested, you can try it): <https://docs.openclaw.ai/platforms/digitalocean>
+- Oracle (tested, but free-tier capacity is often unavailable): <https://docs.openclaw.ai/platforms/oracle>
+
+### 1) Create your `.env` file
+
+Create a local `.env` file first and keep it updated as you complete each credential step below:
+
+```env
+OPENROUTER_API_KEY=
+DISCORD_SERVER_ID=
+DISCORD_USER_ID=
+DISCORD_BOT_TOKEN=
+BRAVE_API_KEY=
+TS_AUTHKEY=
+OCI_TENANCY_ID=
+OCI_USER_ID=
+HCLOUD_TOKEN=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_USER_ID=
+```
+
+### 2) Register accounts and create API credentials
+
+> Tip: As you complete each subsection, immediately paste values into your `.env` file.
+
+#### OpenRouter
+
+- **Sign up:** Visit [https://openrouter.ai/](https://openrouter.ai/) and create an account.
+- **Customize Autorouter:** Go to [routing settings](https://openrouter.ai/settings/routing) and update your defaults.
+
+> OpenRouter's default autorouter picks tiny models that underperform during onboarding and long-context instruction following. For me it chose GPT-5 Nano; during setup openclaw literally misspelled `IDENTITY.md` as `IDENTIY.md` when trying to save the file; and then kept missing basic setup instructions. It called me by the name I gave it, and would forget what we were talking about after one or two messages. Curating the autorouter list up front made reliability way better.
+
+```
+minimax/minimax-m2.5
+google/gemini-3-flash-preview
+google/gemini-3.1-pro-preview
+anthropic/*
+moonshotai/kimi-k2.5
+deepseek/deepseek-v3.2
+openai/gpt-5.2
+google/gemini-3.1-pro-preview
+```
+
+> Practical note: if you're budget-sensitive, avoid adding frontier models (anthropic, openai) and watch usage for the first few days. The goal is to avoid surprise routing while keeping quality high enough for setup and day-to-day agent work. Personally openrouter now almost always chooses minimax and while its no Opus or GPT-5, its well worth the price. I used sonnet 4.6 to get through onboarding and after 10 mins it cost me like $7. I have been using minimax every since, several days now, and it has only cost me about $3.
+
+- **Get API key:** Go to [https://openrouter.ai/settings/keys](https://openrouter.ai/settings/keys), create a key, and save it to `.env` as `OPENROUTER_API_KEY`.
+
+#### Tailscale
+
+- **Sign up:** Create an account at [https://login.tailscale.com/start](https://login.tailscale.com/start).
+- **Create tag:** In [Access Controls > Tags](https://login.tailscale.com/admin/acls/visual/tags), create a tag such as `tag:openclaw`. I made the owner `autogroup:admin` not sure if thats needed or the safest option but you only live once said most of the people who are no longer living.
+- **Create auth key:** In [keys settings](https://login.tailscale.com/admin/settings/keys), create a reusable ephemeral auth key with that tag and save it to `.env` as `TS_AUTHKEY`.
+- **Set up SSH ACL (optional):** If SSH login fails, add this rule in [Tailscale SSH ACLs](https://login.tailscale.com/admin/acls/visual/tailscale-ssh):
+
+```json
+{
+  "src": ["autogroup:admin", "autogroup:owner"],
+  "dst": ["tag:openclaw"],
+  "users": ["autogroup:nonroot", "root", "node"],
+  "action": "accept"
+}
+```
+
+- **Enable HTTPS certs:** In [DNS settings](https://login.tailscale.com/admin/dns), enable HTTPS certificates. This is required for Tailscale Serve.
+- **Start Tailscale on your machine:** [Install Tailscale CLI](https://tailscale.com/docs/install) and run `tailscale up`.
+
+#### Hetzner Cloud
+
+- Sign up at <https://console.hetzner.cloud>
+- Create a project (for example, `openclaw`).
+- From the project screen on the lefthand side click **Security** then the tab **API Tokens**.
+- Generate a **Read & Write** token and save it to `.env` as `HCLOUD_TOKEN`.
+
+#### Discord
+
+> WARNING: While imo the channel option with the most potential, Openclaw's Discord integration is in reality an absolute mess. There are several open issues regarding websocket drops triggered by 1005/1006 abnormal closures, it can happen at any moment, often frequently, and the gateway gets stuck in a reconnect loop, loses session state constantly, and spams logs. In that state, tools over Discord stop working, and the internal spam will eventually disrupt scheduled cron jobs until you restart the whole container process. Hopefully they fix it soon but there seemingly a endless issues opened about it that are prematurely closed / merged without actually fixing the problem. So I added in telegram to the guide as its your solid backup until discord is back in business.
+
+- Set up your Discord bot and private server using: <https://docs.openclaw.ai/channels/discord#quick-setup>
+- Stop after you have the bot token, server ID (aka guild ID), and your user ID. Pulumi will handle the rest
+
+Save the following to your `.env` file as soon as you have them:
+
+```env
+DISCORD_SERVER_ID=
+DISCORD_USER_ID=
+DISCORD_BOT_TOKEN=
+```
+
+#### Telegram
+
+Telegram is a reliable baseline interface and often more stable than Discord.
+
+- Log into telegram
+- Create a bot by messaging [BotFather](https://t.me/botfather) and save the token to `.env` as `TELEGRAM_BOT_TOKEN`.
+- Get your user ID via [userinfobot](https://t.me/userinfobot) and save it to `.env` as `TELEGRAM_USER_ID`.
+
+#### Brave Search API
+
+This is needed for the web search tool.
+
+- Register at [https://api-dashboard.search.brave.com/register](https://api-dashboard.search.brave.com/register)
+- Go to [https://api-dashboard.search.brave.com/app/subscriptions/subscribe](https://api-dashboard.search.brave.com/app/subscriptions/subscribe) and subscribe to Search
+- Go to [https://api-dashboard.search.brave.com/app/keys](https://api-dashboard.search.brave.com/app/keys) and create a new API key for your search subscription. Save it to `.env` as `BRAVE_API_KEY`.
+
+#### Pulumi
+
+Create and configure your Pulumi account:
+
+- [Create](https://app.pulumi.com/signup) a Pulumi account (free tier is enough for this project). Switch to **individual** after signing in.
+- [Install Pulumi CLI](https://www.pulumi.com/docs/get-started/download-install/) and authenticate from your operator machine (`pulumi login`).
+
+### 3) Set up and initialize the Pulumi stack
+
+Copy `Pulumi.dev.yaml.example` to `Pulumi.<your-fave-name>.yaml`.
+
+The default gateway profile is `main`. You can rename it if desired.
+
+Install dependencies and initialize/select a stack:
+
+```bash
+# From repo root
+npm install
+
+# if you haven't already...
+pulumi login
+
+# Create/select stack, call it whatever you want...
+pulumi stack init openclaw
+pulumi stack select openclaw
+```
+
+### 4) Set provider and secret config in Pulumi
+
+This is assuming you have set the environment variables collected in your `.env` file:
+
+```bash
+# Hetzner provider token
+pulumi config set --stack openclaw --secret hcloud:token $HCLOUD_TOKEN
+
+# Tailscale auth key used inside the gateway container
+pulumi config set --secret tailscaleAuthKey $TS_AUTHKEY
+
+# Secret env passed to setupCommands and runtime container env
+pulumi config set --secret gatewaySecretEnv-main "{\"OPENROUTER_API_KEY\":\"$OPENROUTER_API_KEY\",\"BRAVE_API_KEY\":\"$BRAVE_API_KEY\",\"DISCORD_BOT_TOKEN\":\"$DISCORD_BOT_TOKEN\",\"DISCORD_USER_ID\":\"$DISCORD_USER_ID\",\"DISCORD_SERVER_ID\":\"$DISCORD_SERVER_ID\",\"TELEGRAM_BOT_TOKEN\":\"$TELEGRAM_BOT_TOKEN\",\"TELEGRAM_USER_ID\":\"$TELEGRAM_USER_ID\"}"
+```
+
+### 5) Deploy and verify
+
+```bash
+pulumi preview --stack openclaw # review planned resource changes
+
+pulumi up --stack openclaw # apply changes after confirming
+```
+
+Pulumi will show an interactive progress view. The `Gateway` resources usually take the longest because they build images and run init commands. Initial deployment can take up to ~20 minutes. I'm working on optimizing with dockerfile caching and parallelism but for now just grab a coffee and relax. Or be a boss and tweak to use dockerhub-hosted images instead of building on the fly.
+
+After deployment, run:
+
+```bash
+pulumi stack output gatewayServices --show-secrets # shows service urls w/ gateway token, SSH command
+```
+
+> First request using any new tailnet host will take a few seconds to a minute while Tailscale generates TLS certificates for HTTPS handlers. It doesn't trigger until first request, but after that it should be smooth sailing.
+
+- `https://<device_tailnetid>.ts.net#token=<gateway-token>` for Control UI (token needed on first visit)
+- Find your tailnet hostname in Tailscale **Devices** or in Pulumi output `gatewayServices`.
+- `https://<device_tailnetid>.ts.net/browse/` for File Browser.
+- `ssh root@<device_tailnetid>.ts.net` for SSH access (forwarded to gateway sshd).
+
+If all goes well, you now have an operational OpenClaw gateway with Tailscale access, Envoy egress filtering, and runtime binary persistence.
+
+### 6) Post-deploy operational notes
+
+- If you install runtime binaries or change config, restart the gateway container. `openclaw gateway restart` will not work in this deployment model. Use SSH and run: `ssh root@main.yourtsns.ts.net "kill 1"`.
+- To add a domain to the Envoy whitelist, update `egressPolicy` and run `pulumi up` again. Firewall updates only take a few seconds to a minute to propogate.
+- If you want a config value to persist across rebuilds, keep it in `setupCommands`.
+- Removing a `setupCommands` entry does not unset an already-written OpenClaw config value. Unset it manually, then restart the container.
 
 ## Architecture
 
@@ -182,15 +387,15 @@ Configuration lives in `Pulumi.<stack>.yaml`. See `Pulumi.dev.yaml.example` for 
 
 **Gateway profile fields:**
 
-| Field            | Type        | Description                                                     |
-| ---------------- | ----------- | --------------------------------------------------------------- |
-| `profile`        | string      | Unique name (used in resource names)                            |
-| `version`        | string      | OpenClaw version (`latest` or semver)                           |
-| `port`           | number      | Gateway port (e.g. `18789`)                                     |
-| `installBrowser` | boolean     | Bake Playwright + Chromium (~300MB)                             |
-| `imageSteps`     | ImageStep[] | Custom Dockerfile RUN instructions (`{run}` pairs, always root) |
-| `setupCommands`  | string[]    | OpenClaw subcommands run in init container (e.g. `onboard`)     |
-| `env`            | object      | Extra environment variables                                     |
+| Field            | Type        | Description                                                                   |
+| ---------------- | ----------- | ----------------------------------------------------------------------------- |
+| `profile`        | string      | Unique name (used in resource names)                                          |
+| `version`        | string      | OpenClaw version (`latest` or semver)                                         |
+| `port`           | number      | Gateway port (e.g. `18789`)                                                   |
+| `installBrowser` | boolean     | Install Chromium + Xvfb; auto-sets `browser.headless` and `browser.noSandbox` |
+| `imageSteps`     | ImageStep[] | Custom Dockerfile RUN instructions (`{run}` pairs, always root)               |
+| `setupCommands`  | string[]    | OpenClaw subcommands run in init container (e.g. `onboard`)                   |
+| `env`            | object      | Extra environment variables                                                   |
 
 ## Component Hierarchy
 
@@ -281,236 +486,3 @@ Runtime install workflow (example):
 4. Exit and restart: `docker restart openclaw-<profile>` from the host, or `kill 1` as root inside the container.
 
 Because `/home/node` and `/home/linuxbrew/.linuxbrew` are persistent named volumes, installed binaries and package-manager state persist across container restarts/recreation.
-
-## Try it: Deploy OpenClaw with private Discord server access
-
-This is a very unfriendly end-to-end guide for deploying a VPS server [for just you and the claw to chat on a private discord server you create across multiple channels](https://docs.openclaw.ai/channels/discord#quick-setup). I recommend a Hetzner stack since its all I've tested end to end (as of this writing I haven't tested Digital Ocean at all, should be ready in a day or two. OCI never has free tier available). You should probably clone or fork, but I've gitignored `Pulumi.*.yaml` so it should be safe for locally screwing around, and `pre-commit` will block secrets if you install it and try to commit (mostly).
-
-If you are able to struggle through this without losing your sanity, you should be in a good position to customize the deployment for your own use case. And you'll have a nicely deployed locked down openclaw in about 10 mins without doing anything but waiting for it to connect to your discord channel.
-
-Once it does I recommend using this guide to onboard and configure it [https://amankhan1.substack.com/p/how-to-make-your-openclaw-agent-useful](https://amankhan1.substack.com/p/how-to-make-your-openclaw-agent-useful)
-
-But as per that guide at the very least your first message to the bot should be:
-
-- "Hey, let's get you set up. Read BOOTSTRAP.md and walk me through it." To get it onboarded with you followed by...
-- "When I ask questions in Discord channels, use memory_search or memory_get if you need long-term context from MEMORY.md."
-
-As I iron out the kinks and rough edges, I will update this guide to be more user-friendly. But in all fairness OpenClaw itself is very difficult to set up, its documentation rarely is fully accurate, and I had to resort to cloning locally and letting a claude code agent analyze it with Serena LSP to figure out the code paths and actual settings and constraints, there are actually many bugs and gotchas in OpenClaw. Disclaimer: I don't blame the maintainers for this is in the new era of AI generate code adding 1000s of lines a second, and its a massive project I had an anxiety attack just looking at the amount of PRs they have to deal with...
-
-OpenClaw platform references:
-
-- Hetzner (tested, recommended): <https://docs.openclaw.ai/install/hetzner>
-- DigitalOcean (untested, you can try it): <https://docs.openclaw.ai/platforms/digitalocean>
-- Oracle (tested, but free-tier capacity is often unavailable): <https://docs.openclaw.ai/platforms/oracle>
-
-### 1) Register accounts and create API credentials
-
-1. **Hetzner Cloud**
-   - Create a Hetzner Cloud project.
-   - Create a project API token with write access.
-   - Keep the token for `hcloud:token` Pulumi config.
-   - OpenClaw reference: <https://docs.openclaw.ai/install/hetzner>
-
-2. **Discord Developer Portal**
-   - Go to the Discord Developer Portal and create an application.
-   - Add a Bot user for the app and copy the bot token.
-   - Under **Bot**, enable privileged intents your workflow requires (commonly Message Content Intent).
-   - Under **OAuth2 → URL Generator**, select `bot` scope and required bot permissions, then invite the bot to your private Discord server.
-   - OpenClaw reference: <https://docs.openclaw.ai/channels/discord#quick-setup>
-   - Stop at the point where the app is created and added to your private server; Pulumi + `setupCommands` handle the remaining gateway-side setup.
-
-3. **Discord IDs (server + user allowlist values)**
-   - In Discord client settings, enable **Developer Mode**.
-   - Right-click your private server → **Copy Server ID** (`DISCORD_SERVER_ID`).
-   - Right-click your own Discord user/profile → **Copy User ID** (`DISCORD_USER_ID`).
-
-4. **Tailscale**
-   - Create/login to a Tailscale account.
-   - Install Tailscale CLI on your operator machine and run `tailscale up`.
-   - In Tailscale admin, create a tag for these gateways under access controls > tags (e.g. `tag:openclaw`).
-   - In Tailscale admin, under settings > keys, create a reusable-ephemeral auth key for automated node registration and have it apply the tag you created.
-   - Enable HTTPS certificates in the DNS settings.
-   - OpenClaw reference: <https://docs.openclaw.ai/gateway/tailscale#tailscale-prerequisites-+-limits>
-
-5. **OpenRouter**
-   - Create an OpenRouter API key for gateway auth/model access (`OPENROUTER_API_KEY`).
-
-6. **Brave Search API**
-   - Create a Brave Search API key (`BRAVE_API_KEY`).
-   - OpenClaw reference: <https://docs.openclaw.ai/brave-search#brave-search>
-
-### 2) Prepare your Pulumi stack
-
-Create and use a Pulumi account first:
-
-- Create a Pulumi **individual** account (free tier is enough for this project).
-- Install Pulumi CLI and authenticate from your operator machine.
-
-```bash
-# From repo root
-npm install
-
-# Login to Pulumi backend (first time)
-pulumi login
-
-# Create/select stack
-pulumi stack init openclaw-ref || true
-pulumi stack select openclaw-ref
-```
-
-Then use the commands below and the sample stack config shape in this README.
-
-### 3) Set provider + secret config in Pulumi
-
-Set provider credential and deployment secrets via Pulumi config (not plaintext YAML):
-
-```bash
-# Hetzner provider token
-pulumi config set --stack openclaw-ref --secret hcloud:token "<HETZNER_API_TOKEN>"
-
-# Tailscale auth key used inside the gateway container
-pulumi config set --stack openclaw-ref --secret tailscaleAuthKey "<TAILSCALE_AUTH_KEY>"
-
-# Secret env passed to setupCommands and runtime container env
-pulumi config set --stack openclaw-ref --secret gatewaySecretEnv-openclaw-ref '{
-  "OPENROUTER_API_KEY":"<OPENROUTER_API_KEY>",
-  "BRAVE_API_KEY":"<BRAVE_API_KEY>",
-  "DISCORD_BOT_TOKEN":"<DISCORD_BOT_TOKEN>",
-  "DISCORD_USER_ID":"<DISCORD_USER_ID>",
-  "DISCORD_SERVER_ID":"<DISCORD_SERVER_ID>"
-}'
-```
-
-### 4) Stack config shape (sanitized example)
-
-Use this as a safe template for `Pulumi.openclaw-ref.yaml` (no real secrets):
-
-```yaml
-config:
-  openclaw-deploy:provider: hetzner
-  openclaw-deploy:serverType: cx23
-  openclaw-deploy:region: nbg1
-  openclaw-deploy:egressPolicy: '[{"action":"allow","dst":"discord.com","proto":"tls"},{"action":"allow","dst":"gateway.discord.gg","proto":"tls"},{"action":"allow","dst":"cdn.discordapp.com","proto":"tls"},{"action":"allow","dst":"proxy.golang.org","proto":"tls"},{"action":"allow","dst":"sum.golang.org","proto":"tls"},{"action":"allow","dst":"storage.googleapis.com","proto":"tls"}]'
-  openclaw-deploy:gateways:
-    - profile: openclaw-ref
-      version: latest
-      port: 18789
-      installBrowser: true
-      setupCommands:
-        - >-
-          onboard --non-interactive --tailscale serve --accept-risk --mode local --gateway-bind loopback --gateway-token "$OPENCLAW_GATEWAY_TOKEN" --no-install-daemon --auth-choice openrouter-api-key --openrouter-api-key "$OPENROUTER_API_KEY" --skip-channels --skip-skills --skip-daemon --skip-health
-        - config set gateway.auth.allowTailscale true # Ugly hack due to openclaw bugs
-        - config set gateway.controlUi.dangerouslyDisableDeviceAuth true # Ugly hack due to openclaw bugs. its mitigated because you are behind a private tailnet and the gateway token is secret, but ideally this wouldn't be necessary.
-        - config set tools.profile full # this is going to give it the kitchen sink of power. you can change from full to other profiles if you want https://docs.openclaw.ai/tools#tool-profiles-base-allowlist
-        - config set skills.install.nodeManager pnpm
-        - config set gateway.controlUi.allowedOrigins "[\"https://${TAILSCALE_SERVE_HOST}\", \"http://localhost:18789\", \"http://127.0.0.1:18789\"]"
-        - config set agents.defaults.memorySearch.provider openai
-        - 'config set agents.defaults.memorySearch.remote.baseUrl "https://openrouter.ai/api/v1"'
-        - 'config set agents.defaults.memorySearch.remote.apiKey "{"source":"env","provider":"default","id":"OPENROUTER_API_KEY"}"'
-        - config set agents.defaults.memorySearch.model "openai/text-embedding-3-small"
-        - config set tools.web.search.provider brave
-        - 'config set tools.web.search.apiKey "{"source":"env","provider":"default","id":"BRAVE_API_KEY"}"'
-        - 'config set channels.discord.token "{"source":"env","provider":"default","id":"DISCORD_BOT_TOKEN"}"'
-        - 'config set channels.discord.allowFrom "["$DISCORD_USER_ID"]"'
-        - config set channels.discord.dmPolicy allowlist
-        - config set channels.discord.groupPolicy allowlist
-        - config set tools.exec.host gateway
-        - 'config set channels.discord.guilds "{"$DISCORD_SERVER_ID": {"users": ["$DISCORD_USER_ID"], "requireMention": false}}"'
-```
-
-Note: the secret values (`hcloud:token`, `tailscaleAuthKey`, `gatewaySecretEnv-openclaw-ref`, optional `gatewayToken-openclaw-ref`) are set with `pulumi config set --secret` and should not be committed as plaintext and vary by provider.
-
-### 5) Deploy and verify
-
-```bash
-pulumi preview --stack openclaw-ref
-pulumi up --stack openclaw-ref
-
-# Show stack outputs (gateway URLs are secret outputs)
-pulumi stack output --stack openclaw-ref
-pulumi stack output --stack openclaw-ref --show-secrets
-pulumi stack output gatewayServices --show-secrets # shows tailnet hostname, gateway token, SSH and HTTPS access info
-```
-
-After deploy, check the output for your tailnet hostname and access details. There is a slight delay when initially connecting because Tailscale needs to generate an SSL certificate for the domain. Be patient — it can take up to 10-20 seconds. (You need to enable HTTPS in Tailscale; see the docs.) On first run, Tailscale will register your gateway and assign it a random tailnet domain. This domain changes every time you rebuild the stack or recreate the sidecar container (stopping/restarting does not change it).
-
-- `https://<device_tailnetid>.ts.net#token=<gateway-token>` for Control UI
-- `https://<device_tailnetid>.ts.net/browse/` for File Browser
-- `ssh root@<device_tailnetid>.ts.net` for SSH access (Tailscale Serve forwards to sshd inside gateway)
-
-### 6) Post-deploy operational notes
-
-- If you install new runtime binaries, restart the gateway container from the host: `docker restart openclaw-<profile>`, or `kill 1` as root inside the container via SSH.
-- SSH access is provided via Tailscale Serve TCP forwarding — it forwards port 22 on the Tailscale node to sshd (port 2222, loopback) inside the gateway container.
-- Control UI is exposed via Tailscale Serve HTTPS handler at `/` — it proxies to the gateway on loopback.
-- File Browser is exposed via Tailscale Serve HTTPS handler at `/browse/` — it serves the node user's home directory (`/home/node`) for web-based file management. Filebrowser runs inside the gateway container (not a separate container).
-
-## Common Operations
-
-```bash
-# Deploy / update
-pulumi up --stack dev
-
-# Preview changes without applying
-pulumi preview --stack dev
-
-# View stack outputs (server IP, gateway URLs)
-pulumi stack output --stack dev
-
-# Tear down everything
-pulumi destroy --stack dev
-
-# View gateway logs (via SSH to host)
-ssh root@<server-ip> docker logs -f openclaw-personal
-
-# Restart a gateway after config changes
-ssh root@<server-ip> docker restart openclaw-personal
-
-# SSH into gateway via Tailscale
-ssh root@<device_tailnetid>.ts.net
-
-# Run an openclaw CLI command inside a gateway container
-ssh root@<server-ip> docker exec openclaw-personal openclaw config get gateway
-```
-
-## Development
-
-```bash
-npm install                # install dependencies
-npx tsc --noEmit           # type-check
-npx vitest run             # run all tests
-npx vitest run tests/envoy.test.ts  # run a specific test
-npm run check              # typecheck + test
-```
-
-## Repository Structure
-
-```
-index.ts                    # Stack composition entry point
-Pulumi.yaml                 # Pulumi project metadata
-Pulumi.dev.yaml.example     # Example stack config
-components/
-  index.ts                  # Re-exports
-  server.ts                 # VPS provisioning (Hetzner / DigitalOcean / Oracle)
-  bootstrap.ts              # Docker + fail2ban install on bare host
-  envoy.ts                  # Egress proxy: config rendering + cert generation
-  gateway.ts                # Bridge network + sidecar + envoy + gateway containers
-config/
-  index.ts                  # Re-exports
-  types.ts                  # EgressRule, VpsProvider, GatewayConfig, StackConfig
-  domains.ts                # Hardcoded egress rules + mergeEgressPolicy()
-  defaults.ts               # Constants (ports, images, packages)
-templates/
-  index.ts                  # Re-exports
-  dockerfile.ts             # Renders Dockerfile (node:22-bookworm + tools)
-  entrypoint.ts             # Renders entrypoint.sh (sshd + gosu)
-  sidecar.ts                # Renders sidecar-entrypoint.sh (iptables REDIRECT + containerboot)
-  serve.ts                  # Renders serve-config.json (Tailscale Serve config)
-  envoy.ts                  # Renders envoy.yaml (egress-only TLS proxy)
-tests/
-  config.test.ts            # Config types and domain merging
-  templates.test.ts         # Dockerfile/entrypoint/sidecar/serve rendering
-  envoy.test.ts             # Envoy config rendering
-  envoy-component.test.ts   # EnvoyEgress component (mocked)
-  components.test.ts        # All Pulumi components (mocked)
-```

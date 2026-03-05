@@ -162,7 +162,15 @@ const gatewayInstances = gateways.map((gw) => {
       connection: server.connection,
       profile: gw.profile,
       imageName: image.imageName,
-      setupCommands: gw.setupCommands,
+      setupCommands: [
+        ...(gw.installBrowser
+          ? [
+              "config set browser.headless true",
+              "config set browser.noSandbox true",
+            ]
+          : []),
+        ...(gw.setupCommands ?? []),
+      ],
       secretEnv,
       gatewayToken: token,
       tailscaleHostname: sidecar.tailscaleHostname,
