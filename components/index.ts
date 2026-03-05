@@ -2,5 +2,6 @@ export { Server, ServerArgs } from "./server";
 export { HostBootstrap, HostBootstrapArgs } from "./bootstrap";
 export { EnvoyEgress, EnvoyEgressArgs } from "./envoy";
 export { GatewayImage, GatewayImageArgs } from "./gateway-image";
+export { TailscaleSidecar, TailscaleSidecarArgs } from "./tailscale-sidecar";
 export { Gateway, GatewayArgs } from "./gateway";
 export { OciInfra, OciInfraArgs } from "./oci-infra";

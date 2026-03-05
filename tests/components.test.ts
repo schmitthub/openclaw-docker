@@ -552,62 +552,91 @@ describe("EnvoyEgress component", () => {
   });
 });
 
+describe("TailscaleSidecar component", () => {
+  it("creates bridge network, sidecar container, and exposes outputs", async () => {
+    const { TailscaleSidecar } =
+      await import("../components/tailscale-sidecar");
+    const sidecar = new TailscaleSidecar("test-ts", {
+      connection: { host: "100.64.0.1", user: "root" },
+      dockerHost: "ssh://root@100.64.0.1",
+      profile: "dev",
+      port: 18789,
+      tailscaleAuthKey: "tskey-auth-test",
+    });
+
+    expect(sidecar.containerName).toBe("tailscale-dev");
+
+    const hostname = await promiseOf(sidecar.tailscaleHostname);
+    expect(hostname).toBe("mock-stdout");
+
+    const netName = await promiseOf(sidecar.networkName);
+    expect(netName).toBe("openclaw-net-dev");
+  });
+
+  it("constructs with tcpPortMappings without errors", async () => {
+    const { TailscaleSidecar } =
+      await import("../components/tailscale-sidecar");
+    const sidecar = new TailscaleSidecar("test-ts-tcp", {
+      connection: { host: "100.64.0.1", user: "root" },
+      dockerHost: "ssh://root@100.64.0.1",
+      profile: "tcptest",
+      port: 18789,
+      tailscaleAuthKey: "tskey-auth-test",
+      tcpPortMappings: [
+        { dst: "github.com", dstPort: 22, proto: "ssh", envoyPort: 10001 },
+      ],
+    });
+
+    expect(sidecar.containerName).toBe("tailscale-tcptest");
+  });
+});
+
 describe("Gateway component", () => {
-  it("creates image, container, and config resources", async () => {
+  const baseGatewayArgs = {
+    dockerHost: "ssh://root@100.64.0.1",
+    connection: { host: "100.64.0.1", user: "root" },
+    imageName: "openclaw-gateway-dev:latest",
+    port: 18789,
+    sidecarContainerName: "tailscale-dev",
+    tailscaleHostname: "openclaw.tail1234.ts.net",
+    auth: { mode: "token" as const, token: "test-token" },
+    envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
+    envoyConfigHash: "test-hash",
+    inspectedDomains: [] as string[],
+  };
+
+  it("creates container and config resources", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
+      ...baseGatewayArgs,
       profile: "dev",
-      imageName: "openclaw-gateway-dev:latest",
-      port: 18789,
-      auth: { mode: "token", token: "test-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
     });
 
     const containerId = await promiseOf(gw.containerId);
     expect(containerId).toBeDefined();
 
-    // Tailscale is always enabled — mock stdout → "https://mock-stdout"
     const tsUrl = await promiseOf(gw.tailscaleUrl);
-    expect(tsUrl).toBe("https://mock-stdout");
+    expect(tsUrl).toBe("https://openclaw.tail1234.ts.net");
   });
 
-  it("always queries Tailscale hostname", async () => {
+  it("derives tailscaleUrl from tailscaleHostname arg", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw-serve", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
+      ...baseGatewayArgs,
       profile: "prod",
       imageName: "openclaw-gateway-prod:2026.2",
-      port: 18789,
       auth: { mode: "token", token: "prod-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
     });
 
     const tsUrl = await promiseOf(gw.tailscaleUrl);
-    expect(tsUrl).toBe("https://mock-stdout");
+    expect(tsUrl).toBe("https://openclaw.tail1234.ts.net");
   });
 
   it("passes custom env vars to the container", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw-env", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
+      ...baseGatewayArgs,
       profile: "envtest",
-      imageName: "openclaw-gateway-dev:latest",
-      port: 18789,
-      auth: { mode: "token", token: "test-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
       env: { CUSTOM_VAR: "custom-value" },
     });
 
@@ -618,20 +647,12 @@ describe("Gateway component", () => {
   it("constructs with setupCommands without errors", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw-setup", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
+      ...baseGatewayArgs,
       profile: "setuptest",
-      imageName: "openclaw-gateway-dev:latest",
-      port: 18789,
       setupCommands: [
         'onboard --non-interactive --tailscale serve --accept-risk --mode local --gateway-bind loopback --gateway-token "$OPENCLAW_GATEWAY_TOKEN" --no-install-daemon --auth-choice token --token-provider anthropic --token "$ANTHROPIC_API_KEY" --skip-channels --skip-skills --skip-daemon --skip-health',
         "config set gateway.controlUi.basePath /openclaw",
       ],
-      auth: { mode: "token", token: "test-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
     });
 
     const containerId = await promiseOf(gw.containerId);
@@ -641,48 +662,12 @@ describe("Gateway component", () => {
   it("constructs with secretEnv without errors", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw-secret", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
+      ...baseGatewayArgs,
       profile: "secrettest",
-      imageName: "openclaw-gateway-dev:latest",
-      port: 18789,
       setupCommands: [
         'onboard --non-interactive --auth-choice token --token-provider openrouter --token "$OPENROUTER_API_KEY" --skip-channels --skip-skills --skip-daemon --skip-health',
       ],
       secretEnv: JSON.stringify({ OPENROUTER_API_KEY: "sk-or-test-123" }),
-      auth: { mode: "token", token: "test-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
-    });
-
-    const containerId = await promiseOf(gw.containerId);
-    expect(containerId).toBeDefined();
-  });
-
-  it("constructs with tcpPortMappings without errors", async () => {
-    const { Gateway } = await import("../components/gateway");
-    const gw = new Gateway("test-gw-tcp", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
-      profile: "tcptest",
-      imageName: "openclaw-gateway-dev:latest",
-      port: 18789,
-      auth: { mode: "token", token: "test-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
-      tcpPortMappings: [
-        { dst: "github.com", dstPort: 22, proto: "ssh", envoyPort: 10001 },
-        {
-          dst: "db.example.com",
-          dstPort: 5432,
-          proto: "tcp",
-          envoyPort: 10002,
-        },
-      ],
     });
 
     const containerId = await promiseOf(gw.containerId);
@@ -692,16 +677,8 @@ describe("Gateway component", () => {
   it("filters reserved env keys from secretEnv", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw = new Gateway("test-gw-reserved", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
+      ...baseGatewayArgs,
       profile: "reservedtest",
-      imageName: "openclaw-gateway-dev:latest",
-      port: 18789,
-      auth: { mode: "token", token: "test-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
       secretEnv: JSON.stringify({
         OPENCLAW_GATEWAY_TOKEN: "attacker-token",
         CUSTOM_KEY: "value",
@@ -715,31 +692,15 @@ describe("Gateway component", () => {
   it("produces different content hashes for different setupCommands", async () => {
     const { Gateway } = await import("../components/gateway");
     const gw1 = new Gateway("test-gw-hash1", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
+      ...baseGatewayArgs,
       profile: "hash1",
-      imageName: "openclaw-gateway-dev:latest",
-      port: 18789,
       setupCommands: ["config set foo bar"],
-      auth: { mode: "token", token: "test-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
     });
 
     const gw2 = new Gateway("test-gw-hash2", {
-      dockerHost: "ssh://root@100.64.0.1",
-      connection: { host: "100.64.0.1", user: "root" },
+      ...baseGatewayArgs,
       profile: "hash2",
-      imageName: "openclaw-gateway-dev:latest",
-      port: 18789,
       setupCommands: ["config set baz qux"],
-      auth: { mode: "token", token: "test-token" },
-      tailscaleAuthKey: "tskey-auth-test",
-      envoyConfigPath: "/opt/openclaw-deploy/envoy/envoy.yaml",
-      envoyConfigHash: "test-hash",
-      inspectedDomains: [],
     });
 
     const id1 = await promiseOf(gw1.containerId);

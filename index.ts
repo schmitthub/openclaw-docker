@@ -5,6 +5,7 @@ import {
   HostBootstrap,
   EnvoyEgress,
   GatewayImage,
+  TailscaleSidecar,
   Gateway,
 } from "./components";
 import type { EgressRule, GatewayConfig, VpsProvider } from "./config/types";
@@ -124,6 +125,20 @@ const gatewayInstances = gateways.map((gw) => {
     { dependsOn: [bootstrap] },
   );
 
+  // Tailscale sidecar (bridge network + auth + hostname)
+  const sidecar = new TailscaleSidecar(
+    `gateway-ts-${gw.profile}`,
+    {
+      connection: server.connection,
+      dockerHost: bootstrap.dockerHost,
+      profile: gw.profile,
+      port: gw.port,
+      tailscaleAuthKey,
+      tcpPortMappings: envoy.tcpPortMappings,
+    },
+    { dependsOn: [bootstrap] },
+  );
+
   const gateway = new Gateway(
     `gateway-${gw.profile}`,
     {
@@ -132,17 +147,17 @@ const gatewayInstances = gateways.map((gw) => {
       profile: gw.profile,
       port: gw.port,
       imageName: image.imageName,
+      sidecarContainerName: sidecar.containerName,
+      tailscaleHostname: sidecar.tailscaleHostname,
       setupCommands: gw.setupCommands,
       env: gw.env,
       secretEnv,
       auth: { mode: "token", token },
-      tcpPortMappings: envoy.tcpPortMappings,
-      tailscaleAuthKey: tailscaleAuthKey,
       envoyConfigPath: envoy.envoyConfigPath,
       envoyConfigHash: envoy.configHash,
       inspectedDomains: envoy.inspectedDomains,
     },
-    { dependsOn: [envoy, image] },
+    { dependsOn: [envoy, image, sidecar] },
   );
   return { gateway, token };
 });
