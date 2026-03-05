@@ -12,7 +12,7 @@ export interface EnvoyConfigResult {
   warnings: string[];
   /** Domains requiring per-domain certs for MITM TLS inspection */
   inspectedDomains: string[];
-  /** Per-rule port mappings for SSH/TCP egress (passed to gateway entrypoint) */
+  /** Per-rule port mappings for SSH/TCP egress (passed to sidecar entrypoint via OPENCLAW_TCP_MAPPINGS) */
   tcpPortMappings: TcpPortMapping[];
 }
 

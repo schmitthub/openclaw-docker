@@ -22,12 +22,15 @@ export function renderSidecarEntrypoint(): string {
 # 1. iptables NAT (TCP REDIRECT to envoy) + UDP owner-match
 # 2. Hand off to containerboot (official Tailscale entrypoint)
 set -eu
+trap 'echo "FATAL: sidecar-entrypoint.sh failed at line $LINENO (exit $?)" >&2' ERR
 
 # Exclude envoy and root from redirect to prevent loops.
 # Envoy (uid ${ENVOY_UID}) must reach upstream directly.
 # Root (uid 0) runs containerboot/tailscaled — needs direct network access.
-iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner ${ENVOY_UID} -j RETURN
-iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner ${ENVOY_UID} -j RETURN \\
+  || { echo "ERROR: failed to add envoy uid RETURN rule — is NET_ADMIN granted?" >&2; exit 1; }
+iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN \\
+  || { echo "ERROR: failed to add root uid RETURN rule — is NET_ADMIN granted?" >&2; exit 1; }
 
 # Per-destination REDIRECT rules for SSH/TCP egress (port-mapped through Envoy).
 # OPENCLAW_TCP_MAPPINGS format: "dst|dstPort|envoyPort;dst|dstPort|envoyPort;..."
@@ -75,12 +78,16 @@ if [ -n "\${OPENCLAW_TCP_MAPPINGS:-}" ]; then
 fi
 
 # Catch-all: redirect all other outbound TCP to envoy's transparent proxy listener.
-iptables -t nat -A OUTPUT -p tcp ! -d 127.0.0.0/8 -j REDIRECT --to-ports ${ENVOY_EGRESS_PORT}
+iptables -t nat -A OUTPUT -p tcp ! -d 127.0.0.0/8 -j REDIRECT --to-ports ${ENVOY_EGRESS_PORT} \\
+  || { echo "ERROR: failed to add catch-all TCP REDIRECT rule" >&2; exit 1; }
 
 # UDP: Docker DNS for everyone, root (containerboot/tailscaled) for WireGuard, drop all others.
-iptables -A OUTPUT -p udp -d 127.0.0.11 -j ACCEPT
-iptables -A OUTPUT -p udp -m owner --uid-owner 0 -j ACCEPT
-iptables -A OUTPUT -p udp -j DROP
+iptables -A OUTPUT -p udp -d 127.0.0.11 -j ACCEPT \\
+  || { echo "ERROR: failed to add Docker DNS UDP ACCEPT rule" >&2; exit 1; }
+iptables -A OUTPUT -p udp -m owner --uid-owner 0 -j ACCEPT \\
+  || { echo "ERROR: failed to add root UDP ACCEPT rule" >&2; exit 1; }
+iptables -A OUTPUT -p udp -j DROP \\
+  || { echo "ERROR: failed to add UDP DROP rule" >&2; exit 1; }
 
 # Hand off to official Tailscale entrypoint (containerboot handles auth, state, serve config).
 exec /usr/local/bin/containerboot

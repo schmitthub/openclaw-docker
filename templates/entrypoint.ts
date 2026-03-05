@@ -30,7 +30,12 @@ if command -v git >/dev/null 2>&1; then
 fi
 
 # Start sshd for Tailscale Serve TCP forwarding (SSH access via Tailscale).
-/usr/sbin/sshd
+/usr/sbin/sshd || { echo "ERROR: sshd failed to start" >&2; exit 1; }
+sleep 0.5
+if ! pgrep -x sshd >/dev/null 2>&1; then
+  echo "ERROR: sshd exited immediately after start — check /etc/ssh/sshd_config" >&2
+  exit 1
+fi
 
 # Drop privileges and exec the CMD as the node user.
 exec gosu node "$@"

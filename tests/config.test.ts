@@ -65,11 +65,6 @@ describe("domain registry", () => {
       expect(rule.proto).toBe("tls");
     }
   });
-
-  it("no UDP rules in hardcoded egress (sidecar handles UDP)", () => {
-    const udpRules = HARDCODED_EGRESS_RULES.filter((r) => r.proto === "udp");
-    expect(udpRules).toHaveLength(0);
-  });
 });
 
 describe("mergeEgressPolicy", () => {

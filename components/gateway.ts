@@ -472,7 +472,14 @@ export class Gateway extends pulumi.ComponentResource {
       let parsed: Record<string, string>;
       try {
         parsed = JSON.parse(s) as Record<string, string>;
-      } catch {
+      } catch (e) {
+        // JSON parse error is handled by secretEnvParsed above — skip warning check
+        if (!(e instanceof SyntaxError)) {
+          pulumi.log.warn(
+            `Unexpected error checking secretEnv for reserved keys: ${e}`,
+            this,
+          );
+        }
         return;
       }
       const conflicts = Object.keys(parsed).filter((k) =>

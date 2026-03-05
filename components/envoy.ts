@@ -30,7 +30,7 @@ export class EnvoyEgress extends pulumi.ComponentResource {
   public readonly caCertPath: pulumi.Output<string>;
   /** Domains with MITM TLS inspection enabled (need per-domain certs) */
   public readonly inspectedDomains: string[];
-  /** Per-rule port mappings for SSH/TCP egress (passed to gateway containers) */
+  /** Per-rule port mappings for SSH/TCP egress (passed to sidecar container via OPENCLAW_TCP_MAPPINGS) */
   public readonly tcpPortMappings: TcpPortMapping[];
   /** Warnings from egress policy rendering (e.g. unsupported rule types) */
   public readonly warnings: string[];

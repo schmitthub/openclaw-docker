@@ -7,7 +7,7 @@ export interface PathRule {
 
 export interface EgressRule {
   dst: string; // domain "x.com" | IPv4 "140.82.121.4" | IPv6 "2001:db8::1" | CIDR "10.0.0.0/24"
-  proto: "tls" | "ssh" | "tcp" | "udp"; // tls: SNI-based passthrough or MITM inspection; ssh/tcp/udp: per-rule Envoy port mapping
+  proto: "tls" | "ssh" | "tcp"; // tls: SNI-based passthrough or MITM inspection; ssh/tcp: per-rule Envoy port mapping
   port?: number; // required for ssh/tcp, optional for tls (default 443)
   action: "allow" | "deny";
   inspect?: boolean; // MITM TLS termination for path-level rules
@@ -35,7 +35,7 @@ export interface GatewayConfig {
   env?: Record<string, string>; // additional env vars for container
 }
 
-// Per-rule port mapping for SSH/TCP egress (passed to gateway containers)
+// Per-rule port mapping for SSH/TCP egress (passed to sidecar container via OPENCLAW_TCP_MAPPINGS)
 export interface TcpPortMapping {
   /** Destination domain or IP */
   dst: string;

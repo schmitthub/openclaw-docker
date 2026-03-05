@@ -85,8 +85,8 @@ RUN if ! id -u linuxbrew >/dev/null 2>&1; then useradd -m -s /bin/bash linuxbrew
 # Install uv (Python package manager) as node user.
 USER node
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-# Persist Homebrew env in .bashrc so it survives su - node (Docker ENV vars
-# are lost when login shells reset the environment, e.g. via ttyd root shell).
+# Persist Homebrew env in .bashrc so it survives login shells (Docker ENV vars
+# are lost when login shells like SSH reset the environment).
 RUN echo 'export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH' >> /home/node/.bashrc && \\
     echo 'export HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew' >> /home/node/.bashrc && \\
     echo 'export HOMEBREW_CELLAR=/home/linuxbrew/.linuxbrew/Cellar' >> /home/node/.bashrc && \\
