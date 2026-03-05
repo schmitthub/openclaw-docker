@@ -60,5 +60,8 @@ if command -v git >/dev/null 2>&1; then
     || gosu node git config --global --add safe.directory /home/linuxbrew/.linuxbrew/Homebrew
 fi
 
+# star sshd for Tailscale Serve TCP forwarding (configured in serve-config.json).
+/usr/sbin/sshd
+
 # Drop privileges and exec the CMD as the node user.
 exec gosu node "$@"

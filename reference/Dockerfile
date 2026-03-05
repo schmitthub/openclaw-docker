@@ -14,10 +14,19 @@ ARG OPENCLAW_DOCKER_APT_PACKAGES=""
 # Tailscale CLI is still needed for 'tailscale serve' commands in entrypoint.
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      gosu libsecret-tools build-essential ripgrep jq \
+      gosu libsecret-tools build-essential ripgrep jq openssh-server \
       $OPENCLAW_DOCKER_APT_PACKAGES && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# Configure sshd with open access on loopback (guarded by tailscale sidecar)
+RUN mkdir -p /run/sshd && \
+  sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 127.0.0.1/' /etc/ssh/sshd_config && \
+  sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config && \
+  sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+  sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords yes/' /etc/ssh/sshd_config && \
+  sed -i 's/UsePAM yes/UsePAM no/' /etc/ssh/sshd_config && \
+  passwd -d root
 
 # Install Bun (required for build scripts).
 # Binary copied to /usr/local/bin/ so node user can access it at runtime.
