@@ -5,6 +5,7 @@ import {
   DEFAULT_OPENCLAW_WORKSPACE_DIR,
   DEFAULT_GATEWAY_PORT,
   NODE_COMPILE_CACHE_DIR,
+  SSHD_PORT,
 } from "../config/defaults";
 import type { ImageStep } from "../config/types";
 
@@ -38,6 +39,19 @@ RUN apt-get update && \\
       ${CORE_APT_PACKAGES.join(" ")} && \\
     apt-get clean && \\
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# Configure sshd: listen on loopback only, port ${SSHD_PORT}, allow root with empty password.
+# SSH is only accessible via Tailscale Serve TCP forwarding (not exposed to the network).
+RUN mkdir -p /run/sshd && \\
+    sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 127.0.0.1/' /etc/ssh/sshd_config && \\
+    sed -i 's/#Port 22/Port ${SSHD_PORT}/' /etc/ssh/sshd_config && \\
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \\
+    sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords yes/' /etc/ssh/sshd_config && \\
+    sed -i 's/UsePAM yes/UsePAM no/' /etc/ssh/sshd_config && \\
+    passwd -d root && \\
+    ssh-keygen -A && \\
+    chown root:root /usr/bin/ssh && \\
+    chmod 700 /usr/bin/ssh
 
 # Install Bun (required for build scripts).
 # Binary copied to /usr/local/bin/ so node user can access it at runtime.
@@ -73,22 +87,16 @@ RUN if ! id -u linuxbrew >/dev/null 2>&1; then useradd -m -s /bin/bash linuxbrew
 # Install uv (Python package manager) as node user.
 USER node
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-# Persist Homebrew env in .bashrc so it survives su - node (Docker ENV vars
-# are lost when login shells reset the environment, e.g. via ttyd root shell).
+# Persist Homebrew env in .bashrc so it survives login shells (Docker ENV vars
+# are lost when login shells like SSH reset the environment).
 RUN echo 'export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH' >> /home/node/.bashrc && \\
     echo 'export HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew' >> /home/node/.bashrc && \\
     echo 'export HOMEBREW_CELLAR=/home/linuxbrew/.linuxbrew/Cellar' >> /home/node/.bashrc && \\
     echo 'export HOMEBREW_REPOSITORY=/home/linuxbrew/.linuxbrew/Homebrew' >> /home/node/.bashrc
 USER root
 
-# Install Tailscale (used for gateway ingress via tailscale serve/funnel).
+# Install Tailscale CLI (useful for ad-hoc troubleshooting from gateway).
 RUN curl -fsSL https://tailscale.com/install.sh | sh
-
-# Install ttyd (web terminal) and filebrowser (web file manager).
-RUN TTYD_ARCH=$(uname -m) && \\
-    curl -fsSL "https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.\${TTYD_ARCH}" -o /usr/local/bin/ttyd && \\
-    chmod 755 /usr/local/bin/ttyd && \\
-    curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
 WORKDIR /app
 RUN chown node:node /app
@@ -128,8 +136,12 @@ ENV NODE_ENV=production
 ENV OPENCLAW_NO_RESPAWN=1
 ENV NODE_COMPILE_CACHE=${NODE_COMPILE_CACHE_DIR}
 
+# Gateway binds to loopback — Tailscale Serve handles external access.
+ENV OPENCLAW_BRIDGE_PORT=18790
+ENV OPENCLAW_GATEWAY_BIND=loopback
+
 ENTRYPOINT ["entrypoint.sh"]
-CMD ["openclaw", "gateway", "--bind", "loopback", "--tailscale", "serve", "--port", "${gatewayPort}"]
+CMD ["openclaw", "gateway", "--port", "${gatewayPort}"]
 `;
 }
 

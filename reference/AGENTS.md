@@ -15,22 +15,25 @@ Results here inform the `setupCommands` and `configSet` values used in Pulumi st
 
 ## Files
 
-| File                 | Description                                                                            |
-| -------------------- | -------------------------------------------------------------------------------------- |
-| `docker-compose.yml` | Two-service stack: `openclaw-gateway` (server) + `openclaw-cli` (ephemeral CLI runner) |
-| `setup.sh`           | Runtime configuration only — onboard commands, config set, starts gateway              |
-| `.gitignore`         | Excludes `data/` (config + workspace volumes) and `.env`                               |
-| `data/`              | Created at runtime — bind-mounted as config and workspace volumes (gitignored)         |
+| File                    | Description                                                                                    |
+| ----------------------- | ---------------------------------------------------------------------------------------------- |
+| `docker-compose.yml`    | Three-service stack: `tailscale-sidecar` + `openclaw-gateway` + `openclaw-cli` (ephemeral CLI) |
+| `sidecar-entrypoint.sh` | Sidecar: iptables DNAT + FILTER + UDP owner-match + tailscaled                                 |
+| `entrypoint.sh`         | Gateway: socket wait + web tools + gosu node (no iptables)                                     |
+| `setup.sh`              | Runtime configuration only — onboard commands, config set, starts stack                        |
+| `.gitignore`            | Excludes `data/` (config + workspace volumes) and `.env`                                       |
+| `data/`                 | Created at runtime — bind-mounted as config and workspace volumes (gitignored)                 |
 
 ## Separation of Concerns
 
-| Layer           | Responsibility                                                                 |
-| --------------- | ------------------------------------------------------------------------------ |
-| `Dockerfile`    | Package installs, binary setup, env vars, filesystem permissions, dir creation |
-| `entrypoint.sh` | iptables/networking, Tailscale daemon, privilege drop (`gosu node`)            |
-| `setup.sh`      | Runtime app config only — `openclaw config set`, `openclaw onboard`, stack up  |
+| Layer                   | Responsibility                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `Dockerfile`            | Package installs, binary setup, env vars, filesystem permissions, dir creation |
+| `sidecar-entrypoint.sh` | iptables/networking, UDP owner-match, tailscaled (runs in sidecar container)   |
+| `entrypoint.sh`         | Socket wait, web tools, Tailscale Serve, privilege drop (`gosu node`)          |
+| `setup.sh`              | Runtime app config only — `openclaw config set`, `openclaw onboard`, stack up  |
 
-Do NOT put filesystem permissions or binary installs in `setup.sh`. Do NOT put app-level config in the Dockerfile or entrypoint.
+Do NOT put filesystem permissions or binary installs in `setup.sh`. Do NOT put app-level config in the Dockerfile or entrypoint. Networking/iptables belongs in `sidecar-entrypoint.sh`, not `entrypoint.sh`.
 
 ## Prerequisites
 

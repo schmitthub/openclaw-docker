@@ -21,7 +21,7 @@ config:
       port: 18789
       setupCommands:
         - >-
-          onboard --non-interactive --tailscale serve --accept-risk
+          onboard --non-interactive --accept-risk
           --mode local --gateway-bind loopback
           --gateway-token "$OPENCLAW_GATEWAY_TOKEN"
           --no-install-daemon --node-manager pnpm
@@ -29,9 +29,20 @@ config:
           # OpenRouter: --auth-choice openrouter-api-key --openrouter-api-key "$OPENROUTER_API_KEY"
           # OpenAI:     --auth-choice openai-api-key --openai-api-key "$OPENAI_API_KEY"
           --skip-channels --skip-skills --skip-daemon --skip-health
-        - config set gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback true
-        - config set gateway.auth.allowTailscale false
-        - config set gateway.controlUi.dangerouslyDisableDeviceAuth true
+        - config set gateway.auth.allowTailscale true
+        - config set skills.install.nodeManager pnpm
+        - config set gateway.controlUi.allowedOrigins "[\"https://${TAILSCALE_SERVE_HOST}\", \"http://localhost:18789\", \"http://127.0.0.1:18789\"]"
+        - config set gateway.controlUi.dangerouslyDisableDeviceAuth true- config set agents.defaults.memorySearch.provider openai
+        - 'config set agents.defaults.memorySearch.remote.baseUrl "https://openrouter.ai/api/v1"'
+        - 'config set agents.defaults.memorySearch.remote.apiKey "{\"source\":\"env\",\"provider\":\"default\",\"id\":\"OPENROUTER_API_KEY\"}"'
+        - config set agents.defaults.memorySearch.model "openai/text-embedding-3-small"
+        - config set tools.web.search.provider brave
+        - 'config set tools.web.search.apiKey "{\"source\":\"env\",\"provider\":\"default\",\"id\":\"BRAVE_API_KEY\"}"'
+        - 'config set channels.discord.token "{\"source\":\"env\",\"provider\":\"default\",\"id\":\"DISCORD_BOT_TOKEN\"}"'
+        - 'config set channels.discord.allowFrom "[\"$DISCORD_USER_ID\"]"'
+        - config set channels.discord.dmPolicy allowlist
+        - config set channels.discord.groupPolicy allowlist
+        - 'config set channels.discord.guilds "{\"$DISCORD_SERVER_ID\": {\"users\": [\"$DISCORD_USER_ID\"], \"requireMention\": false}}"'
         - config set gateway.trustedProxies '["127.0.0.1/8"]'
         - config set gateway.controlUi.basePath /openclaw
   openclaw-deploy:gatewaySecretEnv-dev:

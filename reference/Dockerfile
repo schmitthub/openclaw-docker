@@ -10,12 +10,27 @@ FROM node:22-bookworm
 RUN groupmod -g 1000 node && usermod -u 1000 node
 
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
+# Note: iptables and iproute2 are NOT needed — the sidecar handles networking.
+# Tailscale CLI is still needed for 'tailscale serve' commands in entrypoint.
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      iptables iproute2 gosu libsecret-tools build-essential ripgrep jq \
+      gosu libsecret-tools build-essential ripgrep jq openssh-server \
       $OPENCLAW_DOCKER_APT_PACKAGES && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# Configure sshd with open access on loopback (guarded by tailscale sidecar)
+RUN mkdir -p /run/sshd && \
+  sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 127.0.0.1/' /etc/ssh/sshd_config && \
+  sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config && \
+  sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+  sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords yes/' /etc/ssh/sshd_config && \
+  sed -i 's/UsePAM yes/UsePAM no/' /etc/ssh/sshd_config && \
+  chown root:root /usr/bin/ssh && \
+  chmod 700 /usr/bin/ssh && \
+  ssh-keygen -A && \
+  passwd -d root
+
 
 # Install Bun (required for build scripts).
 # Binary copied to /usr/local/bin/ so node user can access it at runtime.
@@ -59,15 +74,6 @@ RUN echo 'export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH' >> /home/node/.bashr
     echo 'export HOMEBREW_REPOSITORY=/home/linuxbrew/.linuxbrew/Homebrew' >> /home/node/.bashrc
 USER root
 
-# Install Tailscale (used for gateway ingress via tailscale serve/funnel).
-RUN curl -fsSL https://tailscale.com/install.sh | sh
-
-# Install ttyd (web terminal) and filebrowser (web file manager).
-RUN TTYD_ARCH=$(uname -m) && \
-    curl -fsSL "https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.${TTYD_ARCH}" -o /usr/local/bin/ttyd && \
-    chmod 755 /usr/local/bin/ttyd && \
-    curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
-
 WORKDIR /app
 RUN chown node:node /app
 
@@ -76,7 +82,7 @@ ENV OPENCLAW_CONFIG_DIR=/home/node/.openclaw
 ENV OPENCLAW_WORKSPACE_DIR=/home/node/.openclaw/workspace
 ENV OPENCLAW_GATEWAY_PORT=18789
 ENV OPENCLAW_BRIDGE_PORT=18790
-ENV OPENCLAW_GATEWAY_BIND=lan
+ENV OPENCLAW_GATEWAY_BIND=loopback
 
 # Create config and workspace directories (700 = owner-only, per openclaw doctor)
 RUN mkdir -p "${OPENCLAW_CONFIG_DIR}" "${OPENCLAW_WORKSPACE_DIR}" && \
@@ -106,7 +112,6 @@ RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
       rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
-
 # Ensure node owns everything in its home directory (catches root-created
 # files from Playwright, npm, uv, etc. that would break runtime writes).
 RUN chown -R node:node /home/node
@@ -121,4 +126,4 @@ ENV OPENCLAW_NO_RESPAWN=1
 ENV NODE_COMPILE_CACHE=/home/node/.node-compile-cache
 
 ENTRYPOINT ["entrypoint.sh"]
-CMD ["openclaw", "gateway", "--bind", "loopback", "--tailscale", "serve", "--port", "18789"]
+CMD ["openclaw", "gateway", "--port", "18789"]

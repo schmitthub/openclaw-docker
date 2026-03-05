@@ -1,6 +1,15 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as random from "@pulumi/random";
-import { Server, HostBootstrap, EnvoyEgress, Gateway } from "./components";
+import {
+  Server,
+  HostBootstrap,
+  EnvoyEgress,
+  GatewayImage,
+  TailscaleSidecar,
+  EnvoyProxy,
+  GatewayInit,
+  Gateway,
+} from "./components";
 import type { EgressRule, GatewayConfig, VpsProvider } from "./config/types";
 import { PROVIDERS } from "./config/defaults";
 
@@ -57,8 +66,7 @@ if (duplicates.length > 0) {
 }
 
 // --- Component Composition ---
-// Server → HostBootstrap → EnvoyEgress → Gateway(s)
-// Each component depends on the previous one via explicit resource dependencies.
+// Server → HostBootstrap → {EnvoyEgress, GatewayImage, TailscaleSidecar} → EnvoyProxy → GatewayInit → Gateway
 
 // 1. Provision VPS
 const server = new Server("server", {
@@ -77,11 +85,10 @@ const bootstrap = new HostBootstrap("bootstrap", {
   connection: server.connection,
 });
 
-// 3. Deploy egress proxy (Envoy + Docker networks)
+// 3. Render egress config + generate certificates
 const envoy = new EnvoyEgress(
   "envoy",
   {
-    dockerHost: bootstrap.dockerHost,
     egressPolicy,
     connection: server.connection,
   },
@@ -105,26 +112,80 @@ const gatewayInstances = gateways.map((gw) => {
   const token = manualToken ?? generatedToken.result;
 
   const secretEnv = cfg.getSecret(`gatewaySecretEnv-${gw.profile}`);
+
+  // Build image via BuildKit (content-aware, no manual hash hacks)
+  const image = new GatewayImage(
+    `gateway-image-${gw.profile}`,
+    {
+      dockerHost: bootstrap.dockerHost,
+      profile: gw.profile,
+      version: gw.version,
+      installBrowser: gw.installBrowser,
+      imageSteps: gw.imageSteps,
+    },
+    { dependsOn: [bootstrap] },
+  );
+
+  // Tailscale sidecar (bridge network + auth + hostname)
+  const sidecar = new TailscaleSidecar(
+    `gateway-ts-${gw.profile}`,
+    {
+      connection: server.connection,
+      dockerHost: bootstrap.dockerHost,
+      profile: gw.profile,
+      port: gw.port,
+      tailscaleAuthKey,
+      tcpPortMappings: envoy.tcpPortMappings,
+    },
+    { dependsOn: [bootstrap] },
+  );
+
+  // Envoy proxy (egress, shares sidecar netns)
+  const envoyProxy = new EnvoyProxy(
+    `gateway-envoy-${gw.profile}`,
+    {
+      connection: server.connection,
+      dockerHost: bootstrap.dockerHost,
+      sidecarContainerName: sidecar.containerName,
+      envoyConfigPath: envoy.envoyConfigPath,
+      envoyConfigHash: envoy.configHash,
+      inspectedDomains: envoy.inspectedDomains,
+      profile: gw.profile,
+    },
+    { dependsOn: [sidecar, envoy] },
+  );
+
+  // Init containers (sequential config, needs hostname + image + envoy healthy)
+  const init = new GatewayInit(
+    `gateway-init-${gw.profile}`,
+    {
+      connection: server.connection,
+      profile: gw.profile,
+      imageName: image.imageName,
+      setupCommands: gw.setupCommands,
+      secretEnv,
+      gatewayToken: token,
+      tailscaleHostname: sidecar.tailscaleHostname,
+    },
+    { dependsOn: [image, envoyProxy] },
+  );
+
+  // Gateway container (last — after everything)
   const gateway = new Gateway(
     `gateway-${gw.profile}`,
     {
       dockerHost: bootstrap.dockerHost,
-      connection: server.connection,
-      internalNetworkName: envoy.internalNetworkName,
       profile: gw.profile,
-      version: gw.version,
       port: gw.port,
-      installBrowser: gw.installBrowser,
-      imageSteps: gw.imageSteps,
-      setupCommands: gw.setupCommands,
+      imageName: image.imageName,
+      sidecarContainerName: sidecar.containerName,
+      tailscaleHostname: sidecar.tailscaleHostname,
       env: gw.env,
       secretEnv,
       auth: { mode: "token", token },
-      tcpPortMappings: envoy.tcpPortMappings,
-      udpPortMappings: envoy.udpPortMappings,
-      tailscaleAuthKey: tailscaleAuthKey,
+      initHash: init.contentHash,
     },
-    { dependsOn: [envoy] },
+    { dependsOn: [envoyProxy, init] },
   );
   return { gateway, token };
 });
@@ -132,7 +193,6 @@ const gatewayInstances = gateways.map((gw) => {
 // --- Stack Exports ---
 
 export const serverIp = server.ipAddress;
-export const envoyIp = envoy.envoyIP;
 export const envoyWarnings = envoy.warnings;
 
 // Per-gateway service URLs. The controlUi URL includes the gateway auth token as
@@ -158,9 +218,8 @@ export const gatewayServices = pulumi.secret(
         .all([g.gateway.tailscaleUrl, pulumi.output(g.token)])
         .apply(([url, token]) => ({
           profile: gateways[i].profile,
-          controlUi: `${url}/openclaw?token=${token}`,
-          shell: `${url}/shell`,
-          files: `${url}/files`,
+          controlUi: `${url}#token=${token}`,
+          ssh: `ssh root@${url.replace("https://", "")}`,
         })),
     ),
   ),

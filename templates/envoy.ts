@@ -1,17 +1,8 @@
-import {
-  EgressRule,
-  PathRule,
-  TcpPortMapping,
-  UdpPortMapping,
-} from "../config/types";
+import { EgressRule, PathRule, TcpPortMapping } from "../config/types";
 import { mergeEgressPolicy } from "../config/domains";
 import {
   ENVOY_EGRESS_PORT,
   ENVOY_TCP_PORT_BASE,
-  ENVOY_UDP_PORT_BASE,
-  ENVOY_DNS_PORT,
-  CLOUDFLARE_DNS_PRIMARY,
-  CLOUDFLARE_DNS_SECONDARY,
   ENVOY_MITM_CERTS_CONTAINER_DIR,
   ENVOY_MITM_CLUSTER_NAME,
 } from "../config/defaults";
@@ -21,10 +12,8 @@ export interface EnvoyConfigResult {
   warnings: string[];
   /** Domains requiring per-domain certs for MITM TLS inspection */
   inspectedDomains: string[];
-  /** Per-rule port mappings for SSH/TCP egress (passed to gateway entrypoint) */
+  /** Per-rule port mappings for SSH/TCP egress (passed to sidecar entrypoint via OPENCLAW_TCP_MAPPINGS) */
   tcpPortMappings: TcpPortMapping[];
-  /** Per-rule port mappings for UDP egress (passed to gateway entrypoint) */
-  udpPortMappings: UdpPortMapping[];
 }
 
 interface MitmDomainConfig {
@@ -163,7 +152,8 @@ function renderTcpListener(mapping: TcpPortMapping): string {
           idle_timeout: 0s`;
 }
 
-/** Render a STRICT_DNS or STATIC cluster for a single SSH/TCP egress rule. */
+/** Render a STRICT_DNS or STATIC cluster for a single SSH/TCP egress rule.
+ * Uses system DNS (inherited from sidecar's Cloudflare config via shared netns). */
 function renderTcpCluster(mapping: TcpPortMapping): string {
   const safeName = `${mapping.proto}_${mapping.dst.replace(/[.:]/g, "_")}_${mapping.dstPort}`;
   const clusterName = `tcp_${safeName}`;
@@ -192,17 +182,6 @@ function renderTcpCluster(mapping: TcpPortMapping): string {
     type: STRICT_DNS
     connect_timeout: 5s
     dns_lookup_family: V4_PREFERRED
-    typed_dns_resolver_config:
-      name: envoy.network.dns_resolver.cares
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
-        resolvers:
-        - socket_address:
-            address: "${CLOUDFLARE_DNS_PRIMARY}"
-            port_value: 53
-        - socket_address:
-            address: "${CLOUDFLARE_DNS_SECONDARY}"
-            port_value: 53
     load_assignment:
       cluster_name: ${clusterName}
       endpoints:
@@ -214,90 +193,12 @@ function renderTcpCluster(mapping: TcpPortMapping): string {
                 port_value: ${mapping.dstPort}`;
 }
 
-/** Render a dedicated UDP proxy listener for a single UDP egress rule. */
-function renderUdpListener(mapping: UdpPortMapping): string {
-  const safeName = `udp_${mapping.dst.replace(/[.:]/g, "_")}_${mapping.dstPort}`;
-  const clusterName = `udp_${safeName}`;
-  return `
-  # UDP egress: ${mapping.dst}:${mapping.dstPort} → :${mapping.envoyPort}
-  - name: ${safeName}
-    address:
-      socket_address:
-        address: 0.0.0.0
-        port_value: ${mapping.envoyPort}
-        protocol: UDP
-    listener_filters:
-    - name: envoy.filters.udp_listener.udp_proxy
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig
-        stat_prefix: ${safeName}
-        matcher:
-          on_no_match:
-            action:
-              name: route
-              typed_config:
-                "@type": type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route
-                cluster: ${clusterName}`;
-}
-
-/** Render a STRICT_DNS or STATIC cluster for a single UDP egress rule. */
-function renderUdpCluster(mapping: UdpPortMapping): string {
-  const safeName = `udp_${mapping.dst.replace(/[.:]/g, "_")}_${mapping.dstPort}`;
-  const clusterName = `udp_${safeName}`;
-  const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(mapping.dst);
-  const isIpv6 = mapping.dst.includes(":");
-  const isIp = isIpv4 || isIpv6;
-
-  if (isIp) {
-    return `
-  - name: ${clusterName}
-    type: STATIC
-    connect_timeout: 5s
-    load_assignment:
-      cluster_name: ${clusterName}
-      endpoints:
-      - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address:
-                address: "${mapping.dst}"
-                port_value: ${mapping.dstPort}
-                protocol: UDP`;
-  }
-
-  return `
-  - name: ${clusterName}
-    type: STRICT_DNS
-    connect_timeout: 5s
-    dns_lookup_family: V4_PREFERRED
-    typed_dns_resolver_config:
-      name: envoy.network.dns_resolver.cares
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
-        resolvers:
-        - socket_address:
-            address: "${CLOUDFLARE_DNS_PRIMARY}"
-            port_value: 53
-        - socket_address:
-            address: "${CLOUDFLARE_DNS_SECONDARY}"
-            port_value: 53
-    load_assignment:
-      cluster_name: ${clusterName}
-      endpoints:
-      - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address:
-                address: "${mapping.dst}"
-                port_value: ${mapping.dstPort}
-                protocol: UDP`;
-}
-
 /**
  * Renders envoy.yaml from an egress policy.
  *
- * Egress-only: no ingress listener.
- * Tailscale handles all ingress. Envoy handles transparent egress + DNS.
+ * Egress-only: no ingress listener, no DNS listener.
+ * Tailscale handles all ingress. Envoy handles transparent egress only.
+ * DNS is provided by Docker (sidecar uses dns: [Cloudflare] which is inherited via shared netns).
  * TLS rules with inspect:true use MITM termination for path-level filtering.
  * All other TLS rules use SNI-based passthrough (no TLS termination).
  */
@@ -315,7 +216,6 @@ export function renderEnvoyConfig(
   const inspectedDomains: string[] = [];
   const mitmConfigs: MitmDomainConfig[] = [];
   const tcpMappings: TcpPortMapping[] = [];
-  const udpMappings: UdpPortMapping[] = [];
 
   for (const rule of merged) {
     if (rule.action === "deny") {
@@ -386,42 +286,6 @@ export function renderEnvoyConfig(
         break;
       }
 
-      case "udp": {
-        if (
-          !DOMAIN_RE.test(rule.dst) &&
-          !IP_RE.test(rule.dst) &&
-          !rule.dst.includes("/") &&
-          !rule.dst.includes(":")
-        ) {
-          warnings.push(`Invalid destination "${rule.dst}" — skipped`);
-          break;
-        }
-        if (rule.dst.includes("/")) {
-          warnings.push(
-            `CIDR destination "${rule.dst}" not supported for UDP egress — use a specific IP or domain`,
-          );
-          break;
-        }
-        if (rule.port === undefined) {
-          warnings.push(
-            `UDP egress rule for "${rule.dst}" missing required port — skipped`,
-          );
-          break;
-        }
-        if (rule.dst.includes(":")) {
-          warnings.push(
-            `IPv6 destination "${rule.dst}" for UDP rule — Envoy listener created but gateway iptables routing is IPv4-only`,
-          );
-        }
-        const udpEnvoyPort = ENVOY_UDP_PORT_BASE + udpMappings.length;
-        udpMappings.push({
-          dst: rule.dst,
-          dstPort: rule.port,
-          envoyPort: udpEnvoyPort,
-        });
-        break;
-      }
-
       default:
         warnings.push(
           `Unknown protocol "${(rule as EgressRule).proto}" for destination "${rule.dst}" — skipped`,
@@ -441,21 +305,20 @@ export function renderEnvoyConfig(
 
   const tcpListenerSection = tcpMappings.map(renderTcpListener).join("\n");
   const tcpClusterSection = tcpMappings.map(renderTcpCluster).join("\n");
-  const udpListenerSection = udpMappings.map(renderUdpListener).join("\n");
-  const udpClusterSection = udpMappings.map(renderUdpCluster).join("\n");
 
   const yaml = `# Generated by openclaw-deploy. Do not edit directly.
 #
-# Envoy egress-only proxy: transparent TLS proxy${hasMitm ? " + MITM inspection" : ""} + DNS forwarder.
+# Envoy egress-only proxy: transparent TLS proxy${hasMitm ? " + MITM inspection" : ""}.
 # Ingress is handled by Tailscale (no ingress listener here).
+# DNS is provided by Docker (sidecar uses dns: [Cloudflare], inherited via shared netns).
 # Egress uses TLS Inspector + SNI-based domain whitelist.${hasMitm ? "\n# Domains with inspect:true use MITM TLS termination for path-level filtering." : " No MITM / TLS termination."}
-# All outbound TCP from the gateway is DNAT'd here by iptables in entrypoint.sh.
-# Restart after editing: docker restart envoy
+# All outbound TCP from the gateway is redirected here by iptables in sidecar-entrypoint.sh.
+# Restart after editing: docker restart envoy-<profile>
 
 static_resources:
   listeners:
   # Egress: transparent TLS proxy with SNI-based domain whitelist.
-  # All outbound TCP from the gateway is DNAT'd here by iptables.
+  # All outbound TCP from the gateway is redirected here by iptables.
   # TLS Inspector reads SNI from ClientHello.
   # Whitelisted SNI -> forwarded${hasMitm ? " (passthrough or MITM inspected)" : ""}. Everything else -> connection refused.
   - name: egress
@@ -495,39 +358,7 @@ ${domainLines}
           stat_prefix: egress_denied
           cluster: deny_cluster
           idle_timeout: 0s
-
-  # DNS: forward resolver for containers on the internal network.
-  # Docker's embedded DNS cannot forward external queries from internal-only
-  # networks. Gateway services use dns: [172.28.0.2] (Envoy's static IP)
-  # so Docker DNS forwards here instead of failing with SERVFAIL.
-  # Upstream: Cloudflare ${CLOUDFLARE_DNS_PRIMARY} / ${CLOUDFLARE_DNS_SECONDARY} (malware-blocking DNS).
-  - name: dns
-    address:
-      socket_address:
-        address: 0.0.0.0
-        port_value: ${ENVOY_DNS_PORT}
-        protocol: UDP
-    listener_filters:
-    - name: envoy.filters.udp.dns_filter
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.filters.udp.dns_filter.v3.DnsFilterConfig
-        stat_prefix: dns
-        client_config:
-          resolver_timeout: 5s
-          max_pending_lookups: 256
-          typed_dns_resolver_config:
-            name: envoy.network.dns_resolver.cares
-            typed_config:
-              "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
-              resolvers:
-              - socket_address:
-                  address: "${CLOUDFLARE_DNS_PRIMARY}"
-                  port_value: 53
-              - socket_address:
-                  address: "${CLOUDFLARE_DNS_SECONDARY}"
-                  port_value: 53
 ${tcpListenerSection}
-${udpListenerSection}
   clusters:
   - name: dynamic_forward_proxy_cluster
     lb_policy: CLUSTER_PROVIDED
@@ -545,7 +376,6 @@ ${udpListenerSection}
         keepalive_probes: 3
 ${mitmClusterSection}
 ${tcpClusterSection}
-${udpClusterSection}
   - name: deny_cluster
     type: STATIC
     connect_timeout: 0.25s
@@ -558,6 +388,5 @@ ${udpClusterSection}
     warnings,
     inspectedDomains,
     tcpPortMappings: tcpMappings,
-    udpPortMappings: udpMappings,
   };
 }
