@@ -65,9 +65,19 @@ fi
 
 # Monitor CoreDNS — if it dies after startup, exit to trigger container restart.
 # CoreDNS runs as a background process (not PID 1), so Docker won't detect its death.
-(while kill -0 $(pgrep -x coredns) 2>/dev/null; do sleep 10; done
-  echo "FATAL: CoreDNS died — exiting to trigger container restart" >&2
-  kill 1) &
+# Must disable set -e: pgrep returns exit 1 when no match, which would kill the subshell.
+(
+  set +e
+  trap 'echo "WARN: CoreDNS monitor exited unexpectedly" >&2' EXIT
+  while true; do
+    if ! pgrep -x coredns >/dev/null 2>&1; then
+      echo "FATAL: CoreDNS died — exiting to trigger container restart" >&2
+      kill 1
+      break
+    fi
+    sleep 10
+  done
+) &
 
 # Start filebrowser on loopback (accessible only via Tailscale Serve at /browse).
 if command -v filebrowser >/dev/null 2>&1; then

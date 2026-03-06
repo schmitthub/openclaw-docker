@@ -379,6 +379,10 @@ describe("renderEntrypoint", () => {
     expect(ep).toContain("kill 1");
   });
 
+  it("CoreDNS monitor disables set -e to survive pgrep exit code 1", () => {
+    expect(ep).toContain("set +e");
+  });
+
   it("is valid bash — no TypeScript interpolation artifacts", () => {
     expect(ep).not.toContain("undefined");
     expect(ep).not.toContain("[object");
