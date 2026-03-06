@@ -11,7 +11,9 @@ What this gets you above the official sandboxed docker compose offering:
 
 - One-click deployment of OpenClaw to an actual low cost VPS gateway on Hetzner, DigitalOcean, or Oracle Cloud
 - Tailscale sidecar for secure access and TLS certificate management (no reverse proxy or manual certs needed)
-- Envoy sidecar for egress filtering (aka firewall) with a structured policy engine (blocks unauthorized exfiltration)
+- Firewall via Envoy sidecar for egress filtering with a structured policy engine (blocks unauthorized exfiltration)
+- Firewall bypass escape hatch via root-only SOCKS proxy — temporarily reach any destination without modifying iptables or egress policy by opening a SOCKS tunnel through SSH (the agent already knows how to ask you to do this when it encounters blocked destinations, defaults to 30s timeout)
+- Auto-injected agent environment prompt — the agent understands its constraints out of the box so it knows when to ask, what to ask, and what options it has at its disposal when it comes to tool use, gateway management, and outbound requests
 
 > Early development — features and conventions may change. Contributions and feedback welcome!
 
@@ -40,6 +42,8 @@ What this gets you above the official sandboxed docker compose offering:
   - [Stack Configuration](#stack-configuration)
   - [Component Hierarchy](#component-hierarchy)
   - [Egress Domain Whitelist](#egress-domain-whitelist)
+  - [Firewall Bypass (SOCKS Proxy)](#firewall-bypass-socks-proxy)
+  - [Agent Environment Prompt](#agent-environment-prompt)
   - [Experimental Runtime Binary Persistence](#experimental-runtime-binary-persistence)
 
 ## Try it: Deploy OpenClaw with Telegram and Private Discord server access
@@ -234,6 +238,7 @@ If all goes well, you now have an operational OpenClaw gateway with Tailscale ac
 
 - If you install runtime binaries or change config, restart the gateway container. `openclaw gateway restart` will not work in this deployment model. Use SSH and run: `ssh root@main.yourtsns.ts.net "kill 1"`.
 - To add a domain to the Envoy whitelist, update `egressPolicy` and run `pulumi up` again. Firewall updates only take a few seconds to a minute to propogate.
+- For one-off downloads without updating the whitelist, SSH in as root and use the firewall bypass: `ssh root@main.yourtsns.ts.net "firewall-bypass 30"` then from inside the container: `curl --socks5 localhost:9100 https://example.com/file.tar.gz -o file.tar.gz`. Your agent will already know about this and will most likely ask you if it can use the bypass when it encounters blocked destinations.
 - If you want a config value to persist across rebuilds, keep it in `setupCommands`.
 - Removing a `setupCommands` entry does not unset an already-written OpenClaw config value. Unset it manually, then restart the container.
 
@@ -457,6 +462,49 @@ openclaw-deploy:egressPolicy:
 ```
 
 SSH/TCP rules use per-rule port mapping: each rule gets a dedicated Envoy listener port (starting from 10001), and destination-specific iptables REDIRECT rules in the sidecar entrypoint route matching traffic to the correct port. Domain resolution happens at container startup.
+
+## Firewall Bypass (SOCKS Proxy)
+
+The Envoy egress whitelist requires `pulumi up` to add new domains. For one-off requests this is cumbersome. The `firewall-bypass` script (root-only, chmod 700) starts a temporary SSH SOCKS proxy so your agent can reach any destination temporarily without modifying iptables or the egress policy. Your agent will already know to ask you to open the bypass (or add a permanent whitelist entry) and how to make an outbound request when it encounters blocked destinations.
+
+**How it works:** The script runs `ssh -D 127.0.0.1:9100 -f -N root@127.0.0.1 -p 2222`. Since the SSH process runs as root (uid 0), its outbound traffic hits the iptables `RETURN` rule for root and bypasses the Envoy REDIRECT. No `CAP_NET_ADMIN`, no iptables changes.
+
+```bash
+# SSH into the gateway as root
+ssh root@<device_tailnetdomain>.ts.net
+
+# Start SOCKS proxy (default 30s timeout)
+firewall-bypass
+
+# Start with 2-minute timeout
+firewall-bypass 120
+
+# Check if proxy is active
+firewall-bypass list
+
+# Kill proxy immediately
+firewall-bypass stop
+```
+
+Or as a one-liner from your operator machine:
+
+```bash
+ssh root@main.yourtsns.ts.net "firewall-bypass 30"
+```
+
+The proxy auto-kills after the timeout. PID is tracked in `/run/firewall-bypass.pid`. Re-running while active is idempotent (shows status and exits). The `node` user cannot execute the script (chmod 700).
+
+## Agent Environment Prompt
+
+Every deploy automatically writes an `ENVIRONMENT.md` file into the agent's workspace (`/home/node/.openclaw/workspace/ENVIRONMENT.md`) and injects a reference into `AGENTS.md`. This means your agent understands its operational constraints from the first message — no manual onboarding needed.
+
+The prompt teaches the agent three things it can't figure out on its own:
+
+1. **It can't restart itself.** `openclaw gateway restart` doesn't work in this deployment model. Instead of trying (and crashing), it asks you to restart the container.
+2. **Config changes don't persist without Pulumi.** Instead of editing `openclaw.json` directly (which gets overwritten on next deploy), it gives you the exact `openclaw config set ...` command to add to your IaC.
+3. **The firewall blocks almost everything.** Instead of failing silently or retrying network requests in a loop, it knows to either ask you to add a permanent whitelist entry (for recurring services) or ask you to open the SOCKS tunnel (for one-off downloads). It also knows to have its exact command ready before asking you to open the tunnel since the default window is only 30 seconds.
+
+The file is root-owned and read-only (chmod 444) so the agent can't modify or delete it. A content hash is checked every deploy — if the file is missing, tampered with, or the template changes, it gets rewritten automatically.
 
 ## Experimental Runtime Binary Persistence
 
