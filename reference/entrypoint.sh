@@ -19,6 +19,12 @@ fi
 # start sshd for Tailscale Serve TCP forwarding (configured in serve-config.json).
 /usr/sbin/sshd
 
+# Start CoreDNS allowlist proxy (runs as root so upstream queries bypass UDP DROP).
+# Listens on port 5300; sidecar iptables redirects uid 1000 DNS here.
+if [ -x /usr/local/bin/coredns ] && [ -f /etc/coredns/Corefile ]; then
+  /usr/local/bin/coredns -conf /etc/coredns/Corefile -dns.port 5300 &
+fi
+
 # Start filebrowser on loopback (accessible only via Tailscale Serve at /browse).
 if command -v filebrowser >/dev/null 2>&1; then
   gosu node filebrowser --address 127.0.0.1 --port 8080 --noauth --root /home/node --baseurl /browse &

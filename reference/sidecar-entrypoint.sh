@@ -10,10 +10,12 @@ iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
 # Redirect all other outbound TCP through envoy
 iptables -t nat -A OUTPUT -p tcp ! -d 127.0.0.0/8 -j REDIRECT --to-ports 10000
 
+# Redirect DNS (UDP 53) from node user (uid 1000) to CoreDNS allowlist proxy
+iptables -t nat -A OUTPUT -p udp --dport 53 -m owner --uid-owner 1000 -j REDIRECT --to-port 5300
 
-# UDP: tailscaled only + DNS for everyone
-# Allow DNS through Docker's embedded resolver (port gets rewritten by DNAT)
+# UDP: tailscaled only + DNS for everyone else
 iptables -A OUTPUT -p udp -d 127.0.0.11 -j ACCEPT
+iptables -A OUTPUT -p udp --dport 5300 -j ACCEPT
 iptables -A OUTPUT -p udp -m owner --uid-owner root -j ACCEPT
 iptables -A OUTPUT -p udp -j DROP
 

@@ -75,7 +75,6 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       DISCORD_USER_ID: ${DISCORD_USER_ID:-}
       DISCORD_SERVER_ID: ${DISCORD_SERVER_ID:-}
-      # TS_SOCKET: /var/run/tailscale/tailscaled.sock
     init: true
     restart: unless-stopped
     command: ["openclaw", "gateway", "--bind", "loopback", "--port", "18789"]
@@ -84,7 +83,7 @@ services:
       - openclaw-linuxbrew:/home/linuxbrew/.linuxbrew
       - ${OPENCLAW_CONFIG_DIR:-./data/config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-./data/workspace}:/home/node/.openclaw/workspace
-      # - tailscale-socket:/var/run/tailscale
+      - ${PWD}/Corefile:/etc/coredns/Corefile:ro
     healthcheck:
       test:
         [
