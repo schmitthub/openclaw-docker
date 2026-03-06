@@ -47,14 +47,12 @@ export class GatewayImage extends pulumi.ComponentResource {
 
     // Write build context files to a stable temp directory.
     // Using a stable path (not mkdtempSync) avoids accumulating stale dirs across runs.
+    // Only write if content changed — preserves mtime so BuildKit context hash is stable.
     const tempDir = path.join(os.tmpdir(), `openclaw-build-${args.profile}`);
     fs.mkdirSync(tempDir, { recursive: true });
-    fs.writeFileSync(path.join(tempDir, "entrypoint.sh"), entrypoint, {
-      mode: 0o755,
-    });
-    fs.writeFileSync(path.join(tempDir, "firewall-bypass"), bypassScript, {
-      mode: 0o700,
-    });
+    writeIfChanged(path.join(tempDir, "Dockerfile"), dockerfile, 0o644);
+    writeIfChanged(path.join(tempDir, "entrypoint.sh"), entrypoint, 0o755);
+    writeIfChanged(path.join(tempDir, "firewall-bypass"), bypassScript, 0o700);
 
     // docker-build provider targeting the remote Docker daemon
     const buildProvider = new docker_build.Provider(
@@ -64,15 +62,15 @@ export class GatewayImage extends pulumi.ComponentResource {
     );
 
     // Build the image using BuildKit via @pulumi/docker-build.
-    // - dockerfile.inline: rendered Dockerfile content (no file on disk needed)
-    // - context.location: local temp dir with entrypoint.sh + firewall-bypass (transferred by BuildKit)
+    // - dockerfile.location: Dockerfile written to temp dir alongside other build context files
+    // - context.location: local temp dir with Dockerfile + entrypoint.sh + firewall-bypass (transferred by BuildKit)
     // - load: true: exports the image to the remote Docker daemon's image store
     // - push: false: no registry push, local-only image
     const image = new docker_build.Image(
       `${name}-image`,
       {
         tags: [tag],
-        dockerfile: { inline: dockerfile },
+        dockerfile: { location: path.join(tempDir, "Dockerfile") },
         context: { location: tempDir },
         load: true,
         push: false,
@@ -92,4 +90,15 @@ export class GatewayImage extends pulumi.ComponentResource {
       imageName: this.imageName,
     });
   }
+}
+
+/** Write file only if content differs from what's on disk — preserves mtime for stable BuildKit context hashing. */
+function writeIfChanged(filePath: string, content: string, mode: number) {
+  try {
+    const existing = fs.readFileSync(filePath, "utf-8");
+    if (existing === content) return;
+  } catch {
+    // File doesn't exist yet
+  }
+  fs.writeFileSync(filePath, content, { mode });
 }
