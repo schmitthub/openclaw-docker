@@ -1,4 +1,5 @@
 import * as pulumi from "@pulumi/pulumi";
+import * as command from "@pulumi/command";
 import * as docker_build from "@pulumi/docker-build";
 import * as fs from "fs";
 import * as os from "os";
@@ -11,6 +12,8 @@ import {
 import type { ImageStep } from "../config/types";
 
 export interface GatewayImageArgs {
+  /** SSH connection args for remote commands */
+  connection: pulumi.Input<command.types.input.remote.ConnectionArgs>;
   /** Docker host URI for the remote build daemon, e.g. "ssh://root@<ip>" */
   dockerHost: pulumi.Input<string>;
   /** Unique name for this gateway instance */
@@ -77,6 +80,16 @@ export class GatewayImage extends pulumi.ComponentResource {
         buildOnPreview: false,
       },
       { parent: this, provider: buildProvider },
+    );
+
+    // Prune dangling images after build to reclaim disk space from previous layers
+    new command.remote.Command(
+      `${name}-prune`,
+      {
+        connection: args.connection,
+        create: "docker image prune -f",
+      },
+      { parent: this, dependsOn: [image] },
     );
 
     this.imageName = image.tags.apply((tags) => {

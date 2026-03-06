@@ -120,6 +120,7 @@ const gatewayInstances = gateways.map((gw) => {
   const image = new GatewayImage(
     `gateway-image-${gw.profile}`,
     {
+      connection: server.connection,
       dockerHost: bootstrap.dockerHost,
       profile: gw.profile,
       version: gw.version,

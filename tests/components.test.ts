@@ -792,6 +792,7 @@ describe("GatewayImage component", () => {
   it("creates a docker-build Image resource", async () => {
     const { GatewayImage } = await import("../components/gateway-image");
     const img = new GatewayImage("test-img", {
+      connection: { host: "100.64.0.1", user: "root" },
       dockerHost: "ssh://root@100.64.0.1",
       profile: "dev",
       version: "latest",
@@ -804,6 +805,7 @@ describe("GatewayImage component", () => {
   it("constructs with imageSteps without errors", async () => {
     const { GatewayImage } = await import("../components/gateway-image");
     const img = new GatewayImage("test-img-steps", {
+      connection: { host: "100.64.0.1", user: "root" },
       dockerHost: "ssh://root@100.64.0.1",
       profile: "stepstest",
       version: "latest",
