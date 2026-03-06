@@ -55,7 +55,9 @@ Primary goals:
 │   ├── entrypoint.ts                 # Renders entrypoint.sh (sshd + gosu node)
 │   ├── sidecar.ts                    # Renders sidecar-entrypoint.sh (iptables REDIRECT + containerboot)
 │   ├── serve.ts                      # Renders serve-config.json (Tailscale Serve config)
-│   └── envoy.ts                      # Renders envoy.yaml (egress-only TLS proxy)
+│   ├── envoy.ts                      # Renders envoy.yaml (egress-only TLS proxy)
+│   ├── bypass.ts                     # Renders firewall-bypass script (root-only SOCKS proxy)
+│   └── agent-prompt.ts              # Renders ENVIRONMENT.md (agent operational constraints)
 └── tests/
     ├── config.test.ts                # Config types and domain merging
     ├── templates.test.ts             # Dockerfile/entrypoint/sidecar/serve rendering
@@ -257,6 +259,39 @@ All domains below are hardcoded in `config/domains.ts` and always included. They
 
 User-defined `egressPolicy` rules are **additive** to all hardcoded domains. Duplicates are deduplicated by `mergeEgressPolicy()`.
 Domain filtering uses TLS SNI inspection for TLS traffic. UDP egress is not proxied through Envoy — the sidecar's iptables owner-match rules restrict UDP to root (containerboot) only.
+
+## Firewall Bypass (SOCKS Proxy)
+
+A root-only script (`/usr/local/bin/firewall-bypass`, chmod 700) provides temporary unrestricted egress without modifying iptables or adding capabilities. It starts an SSH SOCKS proxy on `localhost:9100` via `ssh -D` to the local sshd — since the SSH process runs as root (uid 0), its outbound traffic bypasses the iptables RETURN rule for root.
+
+**Usage (as root via SSH):**
+
+```bash
+firewall-bypass           # Start proxy, auto-close after 10s
+firewall-bypass 120       # 120s timeout
+firewall-bypass stop      # Kill proxy immediately
+firewall-bypass list      # Show if proxy is active
+```
+
+**Agent usage:** `curl --socks5 localhost:9100 https://example.com`
+
+**Security properties:**
+
+- Root-only (chmod 700) — the `node` user cannot execute it
+- No `CAP_NET_ADMIN`, no iptables changes
+- Auto-kills after configurable timeout (default 10s)
+- PID tracked in `/run/firewall-bypass.pid`
+- Idempotent: re-running while active shows status and exits
+
+## Agent Environment Prompt
+
+Each gateway gets an `ENVIRONMENT.md` file in the workspace (`/home/node/.openclaw/workspace/ENVIRONMENT.md`) that informs the AI agent about operational constraints (firewall restrictions, restart limitations, config management via Pulumi). The file is:
+
+- **Root-owned, read-only** (chmod 444) — the agent cannot modify or delete it
+- **Content-hash verified** every deploy — rewritten if tampered or template changes
+- **Referenced from `AGENTS.md`** via a one-time `<important>` injection after the H1 heading
+
+The prompt is rendered by `renderAgentPrompt()` in `templates/agent-prompt.ts`.
 
 ## Future Steps
 

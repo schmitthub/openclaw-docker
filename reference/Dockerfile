@@ -119,6 +119,9 @@ RUN chown -R node:node /home/node
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 
+COPY firewall-bypass /usr/local/bin/firewall-bypass
+RUN chmod 700 /usr/local/bin/firewall-bypass
+
 # Force pnpm for package operations (Bun may fail on ARM/Synology architectures).
 ENV OPENCLAW_PREFER_PNPM=1
 ENV NODE_ENV=production

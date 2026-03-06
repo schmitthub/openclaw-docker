@@ -3,7 +3,11 @@ import * as docker_build from "@pulumi/docker-build";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { renderDockerfile, renderEntrypoint } from "../templates";
+import {
+  renderDockerfile,
+  renderEntrypoint,
+  renderFirewallBypass,
+} from "../templates";
 import type { ImageStep } from "../config/types";
 
 export interface GatewayImageArgs {
@@ -39,13 +43,17 @@ export class GatewayImage extends pulumi.ComponentResource {
       imageSteps: args.imageSteps,
     });
     const entrypoint = renderEntrypoint();
+    const bypassScript = renderFirewallBypass();
 
-    // Write entrypoint.sh to a stable temp directory for the build context.
+    // Write build context files to a stable temp directory.
     // Using a stable path (not mkdtempSync) avoids accumulating stale dirs across runs.
     const tempDir = path.join(os.tmpdir(), `openclaw-build-${args.profile}`);
     fs.mkdirSync(tempDir, { recursive: true });
     fs.writeFileSync(path.join(tempDir, "entrypoint.sh"), entrypoint, {
       mode: 0o755,
+    });
+    fs.writeFileSync(path.join(tempDir, "firewall-bypass"), bypassScript, {
+      mode: 0o700,
     });
 
     // docker-build provider targeting the remote Docker daemon
@@ -57,7 +65,7 @@ export class GatewayImage extends pulumi.ComponentResource {
 
     // Build the image using BuildKit via @pulumi/docker-build.
     // - dockerfile.inline: rendered Dockerfile content (no file on disk needed)
-    // - context.location: local temp dir with entrypoint.sh (transferred by BuildKit)
+    // - context.location: local temp dir with entrypoint.sh + firewall-bypass (transferred by BuildKit)
     // - load: true: exports the image to the remote Docker daemon's image store
     // - push: false: no registry push, local-only image
     const image = new docker_build.Image(

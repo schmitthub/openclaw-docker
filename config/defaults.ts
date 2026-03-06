@@ -24,6 +24,10 @@ export const NODE_COMPILE_CACHE_DIR = "/home/node/.node-compile-cache";
 // SSH access
 export const SSHD_PORT = 2222;
 
+// Firewall bypass (root-only SOCKS proxy)
+export const BYPASS_SOCKS_PORT = 9100;
+export const DEFAULT_BYPASS_TIMEOUT_SECS = 30;
+
 // Filebrowser (web file manager, served via Tailscale Serve at /browse)
 export const FILEBROWSER_PORT = 8080;
 

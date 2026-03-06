@@ -18,9 +18,10 @@ Results here inform the `setupCommands` and `configSet` values used in Pulumi st
 | File                    | Description                                                                                    |
 | ----------------------- | ---------------------------------------------------------------------------------------------- |
 | `docker-compose.yml`    | Three-service stack: `tailscale-sidecar` + `openclaw-gateway` + `openclaw-cli` (ephemeral CLI) |
-| `sidecar-entrypoint.sh` | Sidecar: iptables DNAT + FILTER + UDP owner-match + tailscaled                                 |
-| `entrypoint.sh`         | Gateway: socket wait + web tools + gosu node (no iptables)                                     |
+| `sidecar-entrypoint.sh` | Sidecar: iptables REDIRECT + UDP owner-match + exec containerboot                              |
+| `entrypoint.sh`         | Gateway: permissions fix + sshd + filebrowser + gosu node (no iptables)                        |
 | `setup.sh`              | Runtime configuration only — onboard commands, config set, starts stack                        |
+| `firewall-bypass`       | Root-only SOCKS proxy script for temporary firewall bypass (chmod 700)                         |
 | `.gitignore`            | Excludes `data/` (config + workspace volumes) and `.env`                                       |
 | `data/`                 | Created at runtime — bind-mounted as config and workspace volumes (gitignored)                 |
 
@@ -29,9 +30,10 @@ Results here inform the `setupCommands` and `configSet` values used in Pulumi st
 | Layer                   | Responsibility                                                                 |
 | ----------------------- | ------------------------------------------------------------------------------ |
 | `Dockerfile`            | Package installs, binary setup, env vars, filesystem permissions, dir creation |
-| `sidecar-entrypoint.sh` | iptables/networking, UDP owner-match, tailscaled (runs in sidecar container)   |
-| `entrypoint.sh`         | Socket wait, web tools, Tailscale Serve, privilege drop (`gosu node`)          |
-| `setup.sh`              | Runtime app config only — `openclaw config set`, `openclaw onboard`, stack up  |
+| `firewall-bypass`       | Root-only SOCKS proxy — baked into image at `/usr/local/bin/firewall-bypass`   |
+| `sidecar-entrypoint.sh` | iptables REDIRECT, UDP owner-match, exec containerboot (sidecar container)     |
+| `entrypoint.sh`         | Permissions fix, sshd, filebrowser, privilege drop (`gosu node`)               |
+| `setup.sh`              | Runtime app config only — config set, onboard, stack up, ENVIRONMENT.md write  |
 
 Do NOT put filesystem permissions or binary installs in `setup.sh`. Do NOT put app-level config in the Dockerfile or entrypoint. Networking/iptables belongs in `sidecar-entrypoint.sh`, not `entrypoint.sh`.
 
@@ -84,6 +86,8 @@ The `openclaw-cli` service here mirrors the init container pattern in `component
 
 - Pulumi's init container = `docker run --rm --network none --user node ... openclaw-gateway-<profile>:<version> /tmp/init.sh`
 - This reference stack = `docker compose run --rm openclaw-cli <command>`
+
+After the gateway starts, `setup.sh` writes `ENVIRONMENT.md` (root-owned, chmod 444, content-hash verified) to the workspace and injects a reference into `AGENTS.md`. This mirrors the Pulumi post-deploy `command.remote.Command` resources (`gateway-env-prompt-*` and `gateway-agents-ref-*`) that run after the gateway container starts.
 
 Once you've verified the right onboard flags and config commands here, translate them to:
 
