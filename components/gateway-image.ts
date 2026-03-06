@@ -82,13 +82,18 @@ export class GatewayImage extends pulumi.ComponentResource {
       { parent: this, provider: buildProvider },
     );
 
-    // Prune dangling images after build to reclaim disk space from previous untagged builds
+    // Prune dangling images + BuildKit cache after build to reclaim disk space.
+    // BuildKit stores its cache in a Docker volume (not Docker's build cache), so
+    // `docker buildx prune` is needed in addition to `docker image prune`.
+    // --keep-storage keeps ~2GB of recent layers for faster rebuilds.
     new command.remote.Command(
       `${name}-prune`,
       {
         connection: args.connection,
-        create:
-          "docker image prune -f 2>&1 || echo 'WARN: docker image prune failed (non-critical)'",
+        create: [
+          "docker image prune -f 2>&1 || true",
+          "docker buildx prune -f --keep-storage=2GB 2>&1 || true",
+        ].join(" && "),
         triggers: [image.ref],
       },
       { parent: this, dependsOn: [image] },
