@@ -12,7 +12,7 @@ What this gets you above the official sandboxed docker compose offering:
 - One-click deployment of OpenClaw to an actual low cost VPS gateway on Hetzner, DigitalOcean, or Oracle Cloud
 - Tailscale sidecar for secure access and TLS certificate management (no reverse proxy or manual certs needed)
 - Firewall via Envoy sidecar for egress filtering with a structured policy engine (blocks unauthorized exfiltration)
-- Firewall bypass escape hatch via root-only SOCKS proxy — temporarily reach any destination without modifying iptables or egress policy by opening a SOCKS tunnel through SSH (the agent already knows how to ask you to do this when it encounters blocked destinations, defaults to 30s timeout)
+- Firewall escape hatch — grant the agent temporary full internet access for any one-off destination using a convenient ssh one-liner from your machine (auto-closes after 30s by default; the agent already knows to ask for this when it hits blocked destinations)
 - Auto-injected agent environment prompt — the agent understands its constraints out of the box so it knows when to ask, what to ask, and what options it has at its disposal when it comes to tool use, gateway management, and outbound requests
 
 > Early development — features and conventions may change. Contributions and feedback welcome!
