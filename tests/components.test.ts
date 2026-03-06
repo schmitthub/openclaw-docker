@@ -716,8 +716,10 @@ describe("Gateway component", () => {
     port: 18789,
     sidecarContainerName: "tailscale-dev",
     tailscaleHostname: "openclaw.tail1234.ts.net",
+    corefilePath: "/opt/openclaw-deploy/coredns/Corefile",
     auth: { mode: "token" as const, token: "test-token" },
     initHash: "abc123def456",
+    configHash: "deadbeef1234",
   };
 
   it("creates container and exposes outputs", async () => {
@@ -791,6 +793,7 @@ describe("GatewayImage component", () => {
   it("creates a docker-build Image resource", async () => {
     const { GatewayImage } = await import("../components/gateway-image");
     const img = new GatewayImage("test-img", {
+      connection: { host: "100.64.0.1", user: "root" },
       dockerHost: "ssh://root@100.64.0.1",
       profile: "dev",
       version: "latest",
@@ -803,6 +806,7 @@ describe("GatewayImage component", () => {
   it("constructs with imageSteps without errors", async () => {
     const { GatewayImage } = await import("../components/gateway-image");
     const img = new GatewayImage("test-img-steps", {
+      connection: { host: "100.64.0.1", user: "root" },
       dockerHost: "ssh://root@100.64.0.1",
       profile: "stepstest",
       version: "latest",

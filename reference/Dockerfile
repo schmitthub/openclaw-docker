@@ -4,14 +4,47 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
+# ── Stage: download static binaries (parallel, cached independently) ──────────
+FROM debian:bookworm-slim AS downloads
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# CoreDNS — DNS allowlist proxy (~15MB static binary)
+ARG TARGETARCH
+RUN ARCH=$(echo ${TARGETARCH} | sed 's/amd64/amd64/;s/arm64/arm64/') && \
+    curl -fsSL "https://github.com/coredns/coredns/releases/download/v1.12.1/coredns_1.12.1_linux_${ARCH}.tgz" | \
+    tar -xz -C /usr/local/bin/ && \
+    chmod 755 /usr/local/bin/coredns
+
+# Bun
+RUN curl -fsSL https://bun.sh/install | bash && \
+    cp /root/.bun/bin/bun /usr/local/bin/bun
+
+# filebrowser
+RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+
+# ── Stage: homebrew (heaviest, rarely changes) ────────────────────────────────
+FROM node:22-bookworm AS homebrew
+
+RUN groupmod -g 1000 node && usermod -u 1000 node
+
+RUN if ! id -u linuxbrew >/dev/null 2>&1; then useradd -m -s /bin/bash linuxbrew; fi; \
+        usermod -aG linuxbrew node; \
+        mkdir -p "/home/linuxbrew/.linuxbrew"; \
+        chown -R linuxbrew:linuxbrew "/home/linuxbrew"; \
+        su - linuxbrew -c "NONINTERACTIVE=1 CI=1 /bin/bash -c '$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)'"; \
+        if [ ! -e "/home/linuxbrew/.linuxbrew/Library" ]; then ln -s "/home/linuxbrew/.linuxbrew/Homebrew/Library" "/home/linuxbrew/.linuxbrew/Library"; fi; \
+        if [ ! -x "/home/linuxbrew/.linuxbrew/bin/brew" ]; then echo "brew install failed"; exit 1; fi; \
+        chmod -R g+rwx "/home/linuxbrew";
+
+# ── Stage: final ──────────────────────────────────────────────────────────────
 FROM node:22-bookworm
 
 # Pin node user UID/GID to 1000 (matches chown in Pulumi host provisioning).
 RUN groupmod -g 1000 node && usermod -u 1000 node
 
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
-# Note: iptables and iproute2 are NOT needed — the sidecar handles networking.
-# Tailscale CLI is still needed for 'tailscale serve' commands in entrypoint.
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       gosu libsecret-tools build-essential ripgrep jq openssh-server \
@@ -32,51 +65,39 @@ RUN mkdir -p /run/sshd && \
   passwd -d root && \
   passwd -d node
 
+# Copy static binaries from download stage
+COPY --from=downloads /usr/local/bin/coredns /usr/local/bin/coredns
+COPY --from=downloads /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=downloads /usr/local/bin/filebrowser /usr/local/bin/filebrowser
 
-# Install Bun (required for build scripts).
-# Binary copied to /usr/local/bin/ so node user can access it at runtime.
-# (Symlinking through /root/ fails — root home is mode 0700.)
-RUN curl -fsSL https://bun.sh/install | bash && \
-    cp /root/.bun/bin/bun /usr/local/bin/bun
+# Copy Homebrew from dedicated stage
+RUN if ! id -u linuxbrew >/dev/null 2>&1; then useradd -m -s /bin/bash linuxbrew; fi; \
+    usermod -aG linuxbrew node
+COPY --from=homebrew /home/linuxbrew /home/linuxbrew
+RUN chmod -R g+rwx "/home/linuxbrew"
 
 # Install pnpm globally (used by OpenClaw for skill/plugin installs at runtime).
-# PNPM_HOME sets the global bin directory so pnpm install -g works as node user.
 ENV PNPM_HOME=/home/node/.local/share/pnpm
 ENV PATH="${PNPM_HOME}:/home/node/.local/bin:${PATH}"
 RUN npm install -g pnpm && \
     mkdir -p "${PNPM_HOME}" /home/node/.local/bin && chown -R node:node /home/node/.local
 
-# Install Homebrew (Linuxbrew) via dedicated linuxbrew user at default prefix.
-# Custom prefixes lose bottle (binary) support — everything builds from source.
-# The /home/linuxbrew directory is mounted as a named volume for persistence across container recreations.
-# The node user is added to the linuxbrew group for write access (brew install at runtime).
+# Homebrew env
 ENV HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew
 ENV HOMEBREW_CELLAR=/home/linuxbrew/.linuxbrew/Cellar
 ENV HOMEBREW_REPOSITORY=/home/linuxbrew/.linuxbrew/Homebrew
 ENV PATH=/home/linuxbrew/.linuxbrew/bin:$PATH
 
-RUN if ! id -u linuxbrew >/dev/null 2>&1; then useradd -m -s /bin/bash linuxbrew; fi; \
-        usermod -aG linuxbrew node; \
-        mkdir -p "/home/linuxbrew/.linuxbrew"; \
-        chown -R linuxbrew:linuxbrew "/home/linuxbrew"; \
-        su - linuxbrew -c "NONINTERACTIVE=1 CI=1 /bin/bash -c '$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)'"; \
-        if [ ! -e "/home/linuxbrew/.linuxbrew/Library" ]; then ln -s "/home/linuxbrew/.linuxbrew/Homebrew/Library" "/home/linuxbrew/.linuxbrew/Library"; fi; \
-        if [ ! -x "/home/linuxbrew/.linuxbrew/bin/brew" ]; then echo "brew install failed"; exit 1; fi; \
-        chmod -R g+rwx "/home/linuxbrew";
-
 # Install uv (Python package manager) as node user.
 USER node
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-# Persist Homebrew env in .bashrc so it survives su - node (Docker ENV vars
-# are lost when login shells reset the environment, e.g. via ttyd root shell).
+# Persist Homebrew env in .bashrc so it survives login shells (Docker ENV vars
+# are lost when login shells reset the environment).
 RUN echo 'export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH' >> /home/node/.bashrc && \
     echo 'export HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew' >> /home/node/.bashrc && \
     echo 'export HOMEBREW_CELLAR=/home/linuxbrew/.linuxbrew/Cellar' >> /home/node/.bashrc && \
     echo 'export HOMEBREW_REPOSITORY=/home/linuxbrew/.linuxbrew/Homebrew' >> /home/node/.bashrc
 USER root
-
-# Install filebrowser (web file manager, served via Tailscale Serve at /browse).
-RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
 WORKDIR /app
 RUN chown node:node /app
@@ -93,7 +114,7 @@ RUN mkdir -p "${OPENCLAW_CONFIG_DIR}" "${OPENCLAW_WORKSPACE_DIR}" && \
     chown -R node:node "${OPENCLAW_CONFIG_DIR}" "${OPENCLAW_WORKSPACE_DIR}" && \
     chmod 700 "${OPENCLAW_CONFIG_DIR}"
 
-# Install OpenClaw via npm (global, as root → /usr/local).
+# Install OpenClaw via npm (global, as root -> /usr/local).
 # NODE_OPTIONS reduces OOM risk on low-memory hosts (exit 137).
 RUN SHARP_IGNORE_GLOBAL_LIBVIPS=1 NODE_OPTIONS=--max-old-space-size=2048 \
     npm install -g --no-fund --no-audit "openclaw@${OPENCLAW_VERSION}"
@@ -103,7 +124,6 @@ RUN ln -sf "$(npm root -g)/openclaw/dist/entry.js" /usr/local/bin/openclaw && \
     chmod 755 "$(npm root -g)/openclaw/dist/entry.js"
 
 # Optional: install Chromium + Xvfb for browser automation.
-# Build with: docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 ...
 ARG OPENCLAW_INSTALL_BROWSER=""
 RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
       apt-get update && \

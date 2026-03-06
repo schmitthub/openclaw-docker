@@ -4,6 +4,7 @@ import {
   DEFAULT_OPENCLAW_CONFIG_DIR,
   DEFAULT_OPENCLAW_WORKSPACE_DIR,
   ENVOY_CA_CERT_PATH,
+  COREDNS_CONTAINER_PATH,
   dataDir,
 } from "../config";
 
@@ -14,10 +15,14 @@ export interface GatewayArgs {
   imageName: pulumi.Input<string>;
   sidecarContainerName: pulumi.Input<string>;
   tailscaleHostname: pulumi.Input<string>;
+  /** Host path to the Corefile (CoreDNS allowlist config) */
+  corefilePath: pulumi.Input<string>;
   env?: Record<string, string>;
   secretEnv?: pulumi.Input<string>;
   auth: { mode: "token"; token: pulumi.Input<string> };
   initHash: string;
+  /** Hash of rendered configs (envoy.yaml + Corefile) — triggers container replacement on policy change */
+  configHash: string;
 }
 
 // Keys that cannot be overridden via gatewaySecretEnv (set by the component itself)
@@ -141,8 +146,16 @@ export class Gateway extends pulumi.ComponentResource {
             containerPath: ENVOY_CA_CERT_PATH,
             readOnly: true,
           },
+          {
+            hostPath: args.corefilePath,
+            containerPath: COREDNS_CONTAINER_PATH,
+            readOnly: true,
+          },
         ],
-        labels: [{ label: "openclaw.init-hash", value: args.initHash }],
+        labels: [
+          { label: "openclaw.init-hash", value: args.initHash },
+          { label: "openclaw.config-hash", value: args.configHash },
+        ],
       },
       {
         parent: this,

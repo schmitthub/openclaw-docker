@@ -1,0 +1,77 @@
+# CoreDNS allowlist — only whitelisted domains resolve.
+# All other queries return NXDOMAIN.
+# Forwards to Cloudflare malware-blocking DNS (1.1.1.2 / 1.0.0.2).
+#
+# Derived from the same egress policy as envoy.yaml but uses bare domains
+# (CoreDNS server blocks match all subdomains automatically).
+# DNS queries from uid 1000 (node) are redirected here by iptables in sidecar-entrypoint.sh.
+
+# Infrastructure
+clawhub.com {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+npmjs.org {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+# AI providers
+anthropic.com {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+openai.com {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+googleapis.com {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+openrouter.ai {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+x.ai {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+# Homebrew / GitHub
+github.com {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+githubusercontent.com {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+ghcr.io {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+brew.sh {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+# Tailscale (control plane, DERP relays, login, log)
+tailscale.com {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+# Let's Encrypt (ACME for Tailscale Serve TLS certs)
+letsencrypt.org {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+# Catch-all: NXDOMAIN for everything else
+. {
+    template ANY ANY {
+        rcode NXDOMAIN
+    }
+    log
+}

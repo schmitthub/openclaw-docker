@@ -120,6 +120,7 @@ const gatewayInstances = gateways.map((gw) => {
   const image = new GatewayImage(
     `gateway-image-${gw.profile}`,
     {
+      connection: server.connection,
       dockerHost: bootstrap.dockerHost,
       profile: gw.profile,
       version: gw.version,
@@ -194,10 +195,12 @@ const gatewayInstances = gateways.map((gw) => {
       imageName: image.imageName,
       sidecarContainerName: sidecar.containerName,
       tailscaleHostname: sidecar.tailscaleHostname,
+      corefilePath: envoy.corefilePath,
       env: gw.env,
       secretEnv,
       auth: { mode: "token", token },
       initHash: init.contentHash,
+      configHash: envoy.configHash,
     },
     { dependsOn: [envoyProxy, init] },
   );

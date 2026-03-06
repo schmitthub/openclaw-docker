@@ -31,7 +31,7 @@ Remote paths: `/opt/openclaw-deploy/build/<profile>/` (sidecar files), `/opt/ope
 - `pnpm` installed via `npm install -g pnpm`; `PNPM_HOME=/home/node/.local/share/pnpm` for global bin dir
 - `bun` installed via `curl -fsSL https://bun.sh/install | bash` then **copied** to `/usr/local/bin/bun` (symlinks through `/root/` fail — mode 0700)
 - `uv` (Python package manager) installed via official install script as node user
-- Tailscale (`tailscale` CLI only) installed via official install script (~20MB, always installed)
+- CoreDNS installed as static binary from GitHub releases (~15MB, multi-stage download)
 - Homebrew (Linuxbrew) installed via official install script as `node` user; available via PATH
 - OpenClaw installed via `npm install -g openclaw@<version>`
 - `SHARP_IGNORE_GLOBAL_LIBVIPS=1` set during npm install
@@ -54,9 +54,10 @@ All containers (envoy, gateway) share this netns via `network_mode: container:ta
 1. Excludes Envoy (uid 101) from REDIRECT via `iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner ${ENVOY_UID:-101} -j RETURN`
 2. Excludes root (uid 0) from REDIRECT via `iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN`
 3. Processes `OPENCLAW_TCP_MAPPINGS` env var (if set) — per-destination TCP REDIRECT rules for SSH/TCP egress. Each semicolon-delimited entry (`dst|dstPort|envoyPort`) resolves the domain to IP via `getent ahostsv4` and adds a destination-specific iptables REDIRECT rule routing matching traffic to a dedicated Envoy listener port. IP destinations skip resolution. Malformed entries and unresolvable domains emit warnings and are skipped.
-4. Catch-all REDIRECT: all remaining outbound TCP (except loopback) to Envoy's transparent TLS proxy listener (localhost:10000)
-5. **UDP rules**: ACCEPT Docker DNS (127.0.0.11), ACCEPT root-owned UDP (containerboot/tailscaled), DROP all other UDP. This prevents the `node` user (openclaw) from UDP exfiltration.
-6. `exec /usr/local/bin/containerboot "$@"` — hands off to Tailscale's official entrypoint, which handles auth, state, serve config, and keeps the container alive.
+4. **DNS REDIRECT**: UDP and TCP port 53 from uid 1000 (node) REDIRECT to CoreDNS on port 5300. CoreDNS runs inside the gateway container and only resolves whitelisted domains. Both protocols are redirected to prevent bypass via `dig +tcp` or TCP-capable resolvers. These rules come **before** the catch-all TCP REDIRECT.
+5. Catch-all REDIRECT: all remaining outbound TCP (except loopback) to Envoy's transparent TLS proxy listener (localhost:10000)
+6. **UDP rules**: ACCEPT Docker DNS (127.0.0.11), ACCEPT CoreDNS loopback (127.0.0.0/8:5300), ACCEPT root-owned UDP (containerboot/tailscaled), DROP all other UDP. This prevents the `node` user (openclaw) from UDP exfiltration.
+7. `exec /usr/local/bin/containerboot "$@"` — hands off to Tailscale's official entrypoint, which handles auth, state, serve config, and keeps the container alive.
 
 Key differences from previous architecture:
 - `REDIRECT` replaces `DNAT` (shared netns — everything is localhost)
@@ -70,9 +71,11 @@ Key differences from previous architecture:
 The simplified gateway entrypoint handles only application-level setup:
 1. Fixes config dir permissions + git safe.directory for linuxbrew
 2. Starts sshd (for Tailscale Serve TCP forwarding — SSH access)
-3. Drops to `node` user via `exec gosu node "$@"`
+3. Starts CoreDNS allowlist proxy (as root, so upstream queries bypass UDP DROP) + background crash monitor (kills PID 1 to trigger container restart if CoreDNS dies)
+4. Starts filebrowser on loopback
+5. Drops to `node` user via `exec gosu node "$@"`
 
-No iptables, no routing, no tailscaled, no socket wait, no web tools — all networking is handled by the sidecar, SSH replaces ttyd/filebrowser.
+No iptables, no routing, no tailscaled, no socket wait — all networking is handled by the sidecar.
 
 ## Tailscale Serve Config (serve-config.json)
 Rendered by `renderServeConfig(gatewayPort, sshdPort)`:
@@ -104,7 +107,7 @@ Deployed via `TS_SERVE_CONFIG` env var on the sidecar — no dynamic `tailscale 
 - Bridge network: `openclaw-net-<profile>` (NOT `internal: true` — sidecar needs internet). Owned by `TailscaleSidecar`.
 - **Tailscale sidecar** (`tailscale-<profile>`, `TailscaleSidecar` component): uses `tailscale/tailscale:v1.94.2` image, `capabilities.adds: [NET_ADMIN]`, `dns: [1.1.1.2, 1.0.0.2]`, runs on bridge network. Owns the shared network namespace. Env: `TS_AUTHKEY`, `TS_STATE_DIR`, `TS_USERSPACE=false`, `TS_SERVE_CONFIG`, `TS_ENABLE_HEALTH_CHECK=true`, `ENVOY_UID=101`, `OPENCLAW_TCP_MAPPINGS`. Devices: `/dev/net/tun`. Healthcheck: `wget -q --spider http://localhost:9002/healthz || wget -q --spider http://127.0.0.1:9002/healthz`. Outputs: `containerName`, `tailscaleHostname`, `networkName`.
 - **Envoy container** (`envoy-<profile>`, `EnvoyProxy` component): `network_mode: container:tailscale-<profile>`. No `networksAdvanced`, no `dns` (inherited). Env: `ENVOY_UID=101`. Labels: `openclaw.config-hash` (triggers replacement on config change). Volumes: envoy.yaml, CA cert, MITM certs. Healthcheck: `echo > /dev/tcp/localhost/10000`. Outputs: `envoyReady`.
-- **Gateway container** (`openclaw-gateway-<profile>`, `Gateway` component): `network_mode: container:tailscale-<profile>` (shared netns). No `CAP_NET_ADMIN`, no `dns` (inherited), no `networksAdvanced` (mutually exclusive with networkMode). Labels: `openclaw.init-hash` (triggers replacement on init changes).
+- **Gateway container** (`openclaw-gateway-<profile>`, `Gateway` component): `network_mode: container:tailscale-<profile>` (shared netns). No `CAP_NET_ADMIN`, no `dns` (inherited), no `networksAdvanced` (mutually exclusive with networkMode). Labels: `openclaw.init-hash` (triggers replacement on init changes), `openclaw.config-hash` (triggers replacement on egress policy/Corefile changes).
 - Gateway has `init: true`, `restart: unless-stopped`, command: `openclaw gateway --bind loopback --port <port>`
 - No `HTTP_PROXY`/`HTTPS_PROXY` env vars — iptables REDIRECT in sidecar handles all routing transparently
 - `OPENCLAW_TCP_MAPPINGS` env var (optional): semicolon-delimited `dst|dstPort|envoyPort` entries for SSH/TCP egress. Set on the **sidecar** container. Processed by sidecar-entrypoint.sh to create per-destination iptables REDIRECT rules.

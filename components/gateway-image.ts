@@ -1,4 +1,5 @@
 import * as pulumi from "@pulumi/pulumi";
+import * as command from "@pulumi/command";
 import * as docker_build from "@pulumi/docker-build";
 import * as fs from "fs";
 import * as os from "os";
@@ -11,6 +12,8 @@ import {
 import type { ImageStep } from "../config/types";
 
 export interface GatewayImageArgs {
+  /** SSH connection args for remote commands */
+  connection: pulumi.Input<command.types.input.remote.ConnectionArgs>;
   /** Docker host URI for the remote build daemon, e.g. "ssh://root@<ip>" */
   dockerHost: pulumi.Input<string>;
   /** Unique name for this gateway instance */
@@ -47,14 +50,12 @@ export class GatewayImage extends pulumi.ComponentResource {
 
     // Write build context files to a stable temp directory.
     // Using a stable path (not mkdtempSync) avoids accumulating stale dirs across runs.
+    // Only write if content changed — preserves mtime so BuildKit context hash is stable.
     const tempDir = path.join(os.tmpdir(), `openclaw-build-${args.profile}`);
     fs.mkdirSync(tempDir, { recursive: true });
-    fs.writeFileSync(path.join(tempDir, "entrypoint.sh"), entrypoint, {
-      mode: 0o755,
-    });
-    fs.writeFileSync(path.join(tempDir, "firewall-bypass"), bypassScript, {
-      mode: 0o700,
-    });
+    writeIfChanged(path.join(tempDir, "Dockerfile"), dockerfile, 0o644);
+    writeIfChanged(path.join(tempDir, "entrypoint.sh"), entrypoint, 0o755);
+    writeIfChanged(path.join(tempDir, "firewall-bypass"), bypassScript, 0o700);
 
     // docker-build provider targeting the remote Docker daemon
     const buildProvider = new docker_build.Provider(
@@ -64,21 +65,33 @@ export class GatewayImage extends pulumi.ComponentResource {
     );
 
     // Build the image using BuildKit via @pulumi/docker-build.
-    // - dockerfile.inline: rendered Dockerfile content (no file on disk needed)
-    // - context.location: local temp dir with entrypoint.sh + firewall-bypass (transferred by BuildKit)
+    // - dockerfile.location: Dockerfile written to temp dir alongside other build context files
+    // - context.location: local temp dir with Dockerfile + entrypoint.sh + firewall-bypass (transferred by BuildKit)
     // - load: true: exports the image to the remote Docker daemon's image store
     // - push: false: no registry push, local-only image
     const image = new docker_build.Image(
       `${name}-image`,
       {
         tags: [tag],
-        dockerfile: { inline: dockerfile },
+        dockerfile: { location: path.join(tempDir, "Dockerfile") },
         context: { location: tempDir },
         load: true,
         push: false,
         buildOnPreview: false,
       },
       { parent: this, provider: buildProvider },
+    );
+
+    // Prune dangling images after build to reclaim disk space from previous untagged builds
+    new command.remote.Command(
+      `${name}-prune`,
+      {
+        connection: args.connection,
+        create:
+          "docker image prune -f 2>&1 || echo 'WARN: docker image prune failed (non-critical)'",
+        triggers: [image.ref],
+      },
+      { parent: this, dependsOn: [image] },
     );
 
     this.imageName = image.tags.apply((tags) => {
@@ -92,4 +105,23 @@ export class GatewayImage extends pulumi.ComponentResource {
       imageName: this.imageName,
     });
   }
+}
+
+/** Write file only if content differs from what's on disk — preserves mtime for stable BuildKit context hashing. */
+function writeIfChanged(filePath: string, content: string, mode: number) {
+  try {
+    const existing = fs.readFileSync(filePath, "utf-8");
+    if (existing === content) return;
+  } catch (err: unknown) {
+    if (
+      !(
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      )
+    ) {
+      throw err;
+    }
+  }
+  fs.writeFileSync(filePath, content, { mode });
 }
