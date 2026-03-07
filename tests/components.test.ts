@@ -58,9 +58,10 @@ beforeAll(() => {
           state.fingerprint = state.fingerprint ?? "ab:cd:ef:12:34:56";
         }
 
-        // docker-build.Image — provide tags output
+        // docker-build.Image — provide tags and digest outputs
         if (args.type === "docker-build:index:Image") {
           state.tags = state.tags ?? [];
+          state.digest = state.digest ?? "sha256:mockdigest1234567890abcdef";
         }
 
         // command.remote.Command — provide stdout/stderr
