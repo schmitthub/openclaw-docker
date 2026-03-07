@@ -386,17 +386,18 @@ pulumi up
 
 Configuration lives in `Pulumi.<stack>.yaml`. See `Pulumi.dev.yaml.example` for a complete example.
 
-| Key                          | Type                                          | Required | Description                                        |
-| ---------------------------- | --------------------------------------------- | -------- | -------------------------------------------------- |
-| `provider`                   | `"hetzner"` \| `"digitalocean"` \| `"oracle"` | yes      | VPS provider                                       |
-| `serverType`                 | string                                        | yes      | Server type (e.g. `cx22`, `cax21`)                 |
-| `region`                     | string                                        | yes      | Datacenter region (e.g. `fsn1`)                    |
-| `sshKeyId`                   | string                                        | no       | SSH key ID at provider (auto-generated if omitted) |
-| `tailscaleAuthKey`           | secret                                        | yes      | One-time Tailscale auth key                        |
-| `egressPolicy`               | `EgressRule[]`                                | yes      | User egress rules (additive to hardcoded)          |
-| `gateways`                   | `GatewayConfig[]`                             | yes      | Gateway profile definitions (1+)                   |
-| `gatewayToken-<profile>`     | secret                                        | no       | Auth token override (auto-generated if omitted)    |
-| `gatewaySecretEnv-<profile>` | secret                                        | no       | JSON `{"KEY":"value"}` env vars for init + runtime |
+| Key                          | Type                                          | Required | Description                                             |
+| ---------------------------- | --------------------------------------------- | -------- | ------------------------------------------------------- |
+| `provider`                   | `"hetzner"` \| `"digitalocean"` \| `"oracle"` | yes      | VPS provider                                            |
+| `serverType`                 | string                                        | yes      | Server type (e.g. `cx22`, `cax21`)                      |
+| `region`                     | string                                        | yes      | Datacenter region (e.g. `fsn1`)                         |
+| `sshKeyId`                   | string                                        | no       | SSH key ID at provider (auto-generated if omitted)      |
+| `tailscaleAuthKey`           | secret                                        | yes      | One-time Tailscale auth key                             |
+| `egressPolicy`               | `EgressRule[]`                                | yes      | User egress rules (additive to hardcoded)               |
+| `gateways`                   | `GatewayConfig[]`                             | yes      | Gateway profile definitions (1+)                        |
+| `dockerhubPush`              | boolean                                       | no       | Build locally and push to Docker Hub (default: `false`) |
+| `gatewayToken-<profile>`     | secret                                        | no       | Auth token override (auto-generated if omitted)         |
+| `gatewaySecretEnv-<profile>` | secret                                        | no       | JSON `{"KEY":"value"}` env vars for init + runtime      |
 
 **Gateway profile fields:**
 
@@ -521,6 +522,32 @@ The prompt teaches the agent three things it can't figure out on its own:
 3. **The firewall blocks almost everything.** Instead of failing silently or retrying network requests in a loop, it knows to either ask you to add a permanent whitelist entry (for recurring services) or ask you to open the SOCKS tunnel (for one-off downloads). It also knows to have its exact command ready before asking you to open the tunnel since the default window is only 30 seconds.
 
 The file is root-owned and read-only (chmod 444) so the agent can't modify or delete it. It is re-deployed when the template content changes (Pulumi trigger on content hash).
+
+## Docker Hub Build Mode
+
+By default, gateway images are built directly on the VPS via `DOCKER_HOST=ssh://`. This works but has a known limitation: the `@pulumi/docker-build` provider creates an unmanaged BuildKit container on the VPS whose build cache accumulates over time and cannot be pruned via the Docker CLI ([pulumi/pulumi-docker-build#65](https://github.com/pulumi/pulumi-docker-build/issues/65)).
+
+To avoid this, set `dockerhubPush: true` in your stack config. This builds images locally and pushes them to a private Docker Hub registry, then pulls them on the VPS. Build cache stays on your local machine where it's trivially manageable.
+
+```yaml
+openclaw-deploy:dockerhubPush: true
+```
+
+**Required environment variables** (when `dockerhubPush: true`):
+
+| Variable             | Description                                      |
+| -------------------- | ------------------------------------------------ |
+| `DOCKERHUB_REGISTRY` | Registry address (e.g. `docker.io/yourusername`) |
+| `DOCKERHUB_USERNAME` | Docker Hub username                              |
+| `DOCKERHUB_TOKEN`    | Docker Hub access token                          |
+
+**If using the default SSH build mode** (`dockerhubPush: false`), build cache will accumulate on the VPS. To reclaim disk space, SSH into the VPS and run:
+
+```bash
+docker ps --filter name=buildx_buildkit -q \
+  | xargs -r -I{} docker exec {} buildctl prune --keep-storage 2048
+docker image prune -f
+```
 
 ## Experimental Runtime Binary Persistence
 
