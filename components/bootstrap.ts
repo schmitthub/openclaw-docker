@@ -43,6 +43,7 @@ export class HostBootstrap extends pulumi.ComponentResource {
         `printf 'APT::Periodic::Update-Package-Lists "1";\\nAPT::Periodic::Unattended-Upgrade "1";\\n' > /etc/apt/apt.conf.d/20auto-upgrades`,
         "systemctl enable unattended-upgrades",
         "systemctl restart unattended-upgrades",
+        "sleep 1",
         "systemctl is-active unattended-upgrades",
       ].join(" && ");
       enableAutoUpdates = new command.remote.Command(

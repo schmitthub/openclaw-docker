@@ -81,8 +81,18 @@ const hetznerConfig = cfg.getObject<HetznerConfig>("hetzner");
 if (hetznerConfig !== undefined) {
   if (typeof hetznerConfig !== "object" || hetznerConfig === null) {
     throw new Error(
-      `Invalid "hetzner" config: expected an object (e.g. { backups: true }), got ${typeof hetznerConfig}. ` +
+      `Invalid "hetzner" config: expected an object (e.g. { backups: true }), got ${hetznerConfig === null ? "null" : typeof hetznerConfig}. ` +
         `Check your Pulumi.<stack>.yaml formatting.`,
+    );
+  }
+  const validHetznerKeys = new Set(["backups"]);
+  const unknownKeys = Object.keys(hetznerConfig).filter(
+    (k) => !validHetznerKeys.has(k),
+  );
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `Unknown key(s) in "hetzner" config: ${unknownKeys.join(", ")}. ` +
+        `Valid keys: ${[...validHetznerKeys].join(", ")}.`,
     );
   }
   if (provider !== "hetzner") {

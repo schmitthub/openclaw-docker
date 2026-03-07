@@ -63,11 +63,11 @@ Components accept typed args interfaces (5 per gateway, plus shared infra):
 - `ServerArgs`: provider, serverType, region?, sshKeyId?, image?, hetzner?, compartmentId?, subnetId?, ocpus?, memoryInGbs?
 - `HostBootstrapArgs`: connection, autoUpdate?
 - `EnvoyEgressArgs`: connection, egressPolicy
-- `GatewayImageArgs`: dockerHost, profile, version, installBrowser?, imageSteps?
+- `GatewayImageArgs`: connection, dockerHost, profile, version, installBrowser?, imageSteps?, dockerhubPush?
 - `TailscaleSidecarArgs`: connection, dockerHost, profile, port, tailscaleAuthKey, tcpPortMappings?
 - `EnvoyProxyArgs`: connection, dockerHost, sidecarContainerName, envoyConfigPath, envoyConfigHash, inspectedDomains, profile
 - `GatewayInitArgs`: connection, profile, imageName, setupCommands?, secretEnv?, gatewayToken, tailscaleHostname
-- `GatewayArgs`: dockerHost, profile, port, imageName, sidecarContainerName, tailscaleHostname, env?, secretEnv?, auth, initHash
+- `GatewayArgs`: dockerHost, profile, port, imageName, sidecarContainerName, tailscaleHostname, corefilePath, env?, secretEnv?, auth, initHash, configHash, imageDigest
 
 Security-critical gateway config keys (`gateway.mode`, `gateway.auth.*`, `gateway.trustedProxies`, `discovery.mdns.mode`) are set by `GatewayInit` and **cannot be overridden** by user `setupCommands`.
 
