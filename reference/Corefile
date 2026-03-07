@@ -16,6 +16,27 @@ npmjs.org {
     forward . 1.1.1.2 1.0.0.2
 }
 
+discord.com {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+discord.gg {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+discord.media {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+discord.app {
+    errors
+    forward . 1.1.1.2 1.0.0.2
+}
+
+
 # AI providers
 anthropic.com {
     errors
