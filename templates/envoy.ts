@@ -5,6 +5,8 @@ import {
   ENVOY_TCP_PORT_BASE,
   ENVOY_MITM_CERTS_CONTAINER_DIR,
   ENVOY_MITM_CLUSTER_NAME,
+  DOMAIN_VALIDATION_RE,
+  safeFileDomain,
 } from "../config/defaults";
 
 export interface EnvoyConfigResult {
@@ -63,9 +65,10 @@ function renderPathRoutes(pathRules: PathRule[]): string {
 /** Render a single MITM filter chain for an inspected domain. */
 function renderMitmFilterChain(config: MitmDomainConfig): string {
   const { domain, pathRules } = config;
-  const safeName = domain.replace(/\./g, "_");
-  const certPath = `${ENVOY_MITM_CERTS_CONTAINER_DIR}/${domain}-cert.pem`;
-  const keyPath = `${ENVOY_MITM_CERTS_CONTAINER_DIR}/${domain}-key.pem`;
+  const safeName = safeFileDomain(domain).replace(/\./g, "_");
+  const fileDomain = safeFileDomain(domain);
+  const certPath = `${ENVOY_MITM_CERTS_CONTAINER_DIR}/${fileDomain}-cert.pem`;
+  const keyPath = `${ENVOY_MITM_CERTS_CONTAINER_DIR}/${fileDomain}-key.pem`;
   const routeEntries = renderPathRoutes(pathRules);
 
   return `    # MITM TLS inspection: ${domain}
@@ -202,8 +205,6 @@ function renderTcpCluster(mapping: TcpPortMapping): string {
  * TLS rules with inspect:true use MITM termination for path-level filtering.
  * All other TLS rules use SNI-based passthrough (no TLS termination).
  */
-const DOMAIN_RE =
-  /^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 const IP_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 
 export function renderEnvoyConfig(
@@ -225,23 +226,16 @@ export function renderEnvoyConfig(
     switch (rule.proto) {
       case "tls":
         // Validate domain before interpolating into YAML (CIDRs not valid for TLS)
-        if (!DOMAIN_RE.test(rule.dst) && !IP_RE.test(rule.dst)) {
+        if (!DOMAIN_VALIDATION_RE.test(rule.dst) && !IP_RE.test(rule.dst)) {
           warnings.push(`Invalid destination "${rule.dst}" — skipped`);
           break;
         }
         if (rule.inspect) {
-          if (rule.dst.includes("*")) {
-            warnings.push(
-              `Wildcard domain "${rule.dst}" cannot use MITM inspection — treating as passthrough`,
-            );
-            passthroughDomains.push(rule.dst);
-          } else {
-            inspectedDomains.push(rule.dst);
-            mitmConfigs.push({
-              domain: rule.dst,
-              pathRules: rule.pathRules ?? [],
-            });
-          }
+          inspectedDomains.push(rule.dst);
+          mitmConfigs.push({
+            domain: rule.dst,
+            pathRules: rule.pathRules ?? [],
+          });
         } else {
           passthroughDomains.push(rule.dst);
         }
@@ -251,7 +245,7 @@ export function renderEnvoyConfig(
       case "tcp": {
         // Validate destination before interpolating into YAML
         if (
-          !DOMAIN_RE.test(rule.dst) &&
+          !DOMAIN_VALIDATION_RE.test(rule.dst) &&
           !IP_RE.test(rule.dst) &&
           !rule.dst.includes("/") &&
           !rule.dst.includes(":")
