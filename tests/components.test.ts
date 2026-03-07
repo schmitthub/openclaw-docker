@@ -720,6 +720,7 @@ describe("Gateway component", () => {
     auth: { mode: "token" as const, token: "test-token" },
     initHash: "abc123def456",
     configHash: "deadbeef1234",
+    imageDigest: "sha256:test1234567890",
   };
 
   it("creates container and exposes outputs", async () => {

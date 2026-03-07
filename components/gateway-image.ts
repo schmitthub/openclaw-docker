@@ -2,6 +2,7 @@ import * as pulumi from "@pulumi/pulumi";
 import * as command from "@pulumi/command";
 import * as docker from "@pulumi/docker";
 import * as docker_build from "@pulumi/docker-build";
+import * as child_process from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -11,6 +12,12 @@ import {
   renderFirewallBypass,
 } from "../templates";
 import type { ImageStep } from "../config/types";
+
+/** Git commit SHA (short, 7 chars) at plan time. Used as an additional image tag for immutable identification. */
+const GIT_SHA = child_process
+  .execSync("git rev-parse --short=7 HEAD")
+  .toString()
+  .trim();
 
 export interface GatewayImageArgs {
   /** SSH connection args for remote commands */
@@ -32,6 +39,8 @@ export interface GatewayImageArgs {
 export class GatewayImage extends pulumi.ComponentResource {
   /** The image tag, e.g. "openclaw-gateway-dev:latest" or "registry/openclaw-gateway-dev:latest" */
   public readonly imageName: pulumi.Output<string>;
+  /** Image content digest from the build (e.g. "sha256:abc..."). Changes when image content changes. */
+  public readonly imageDigest: pulumi.Output<string>;
 
   constructor(
     name: string,
@@ -58,14 +67,21 @@ export class GatewayImage extends pulumi.ComponentResource {
     writeIfChanged(path.join(tempDir, "entrypoint.sh"), entrypoint, 0o755);
     writeIfChanged(path.join(tempDir, "firewall-bypass"), bypassScript, 0o700);
 
+    let imageRef: pulumi.Output<string>;
     if (args.dockerhubPush) {
-      this.imageName = this.buildAndPush(name, args, tempDir);
+      const result = this.buildAndPush(name, args, tempDir);
+      this.imageName = result.imageName;
+      imageRef = result.imageRef;
     } else {
-      this.imageName = this.buildOnHost(name, args, tempDir);
+      const result = this.buildOnHost(name, args, tempDir);
+      this.imageName = result.imageName;
+      imageRef = result.imageRef;
     }
+    this.imageDigest = imageRef;
 
     this.registerOutputs({
       imageName: this.imageName,
+      imageDigest: this.imageDigest,
     });
   }
 
@@ -74,7 +90,7 @@ export class GatewayImage extends pulumi.ComponentResource {
     name: string,
     args: GatewayImageArgs,
     tempDir: string,
-  ): pulumi.Output<string> {
+  ): { imageName: pulumi.Output<string>; imageRef: pulumi.Output<string> } {
     const repo = process.env.DOCKER_REGISTRY_REPO;
     const username = process.env.DOCKER_REGISTRY_USER;
     const password = process.env.DOCKER_REGISTRY_PASS;
@@ -86,17 +102,21 @@ export class GatewayImage extends pulumi.ComponentResource {
     }
 
     const remoteTag = `${repo}:${args.profile}-${args.version}`;
+    const commitTag = `${repo}:${args.profile}-${GIT_SHA}`;
 
     const SAFE_DOCKER_RE = /^[a-zA-Z0-9._\-/:]+$/;
     if (!SAFE_DOCKER_RE.test(remoteTag)) {
       throw new Error(`Invalid characters in Docker tag: ${remoteTag}`);
     }
+    if (!SAFE_DOCKER_RE.test(commitTag)) {
+      throw new Error(`Invalid characters in Docker tag: ${commitTag}`);
+    }
 
-    // Build locally and push to Docker Hub
+    // Build locally and push to Docker Hub (both version tag and commit SHA tag)
     const image = new docker_build.Image(
       `${name}-image`,
       {
-        tags: [remoteTag],
+        tags: [remoteTag, commitTag],
         dockerfile: { location: path.join(tempDir, "Dockerfile") },
         context: { location: tempDir },
         push: true,
@@ -130,11 +150,12 @@ export class GatewayImage extends pulumi.ComponentResource {
       { parent: this },
     );
 
-    // Use docker.io/ prefix so the provider matches registryAuth address
+    // Pull by commit SHA tag — the tag name changes every commit, forcing a re-pull.
+    // Use docker.io/ prefix so the provider matches registryAuth address.
     const pullTag =
-      remoteTag.includes("/") && !remoteTag.includes(".")
-        ? `docker.io/${remoteTag}`
-        : remoteTag;
+      commitTag.includes("/") && !commitTag.includes(".")
+        ? `docker.io/${commitTag}`
+        : commitTag;
     const pulled = new docker.RemoteImage(
       `${name}-pull`,
       {
@@ -157,7 +178,8 @@ export class GatewayImage extends pulumi.ComponentResource {
       { parent: this, dependsOn: [pulled] },
     );
 
-    return firstTag(image, name);
+    // Return the commit-tagged image name (matches what was pulled on the VPS)
+    return { imageName: pulumi.output(pullTag), imageRef: image.ref };
   }
 
   /** Build on the VPS via DOCKER_HOST=ssh://. Emits a warning about BuildKit cache accumulation. */
@@ -165,8 +187,9 @@ export class GatewayImage extends pulumi.ComponentResource {
     name: string,
     args: GatewayImageArgs,
     tempDir: string,
-  ): pulumi.Output<string> {
+  ): { imageName: pulumi.Output<string>; imageRef: pulumi.Output<string> } {
     const tag = `openclaw-gateway-${args.profile}:${args.version}`;
+    const commitTag = `openclaw-gateway-${args.profile}:${GIT_SHA}`;
 
     pulumi.log.warn(
       [
@@ -192,7 +215,7 @@ export class GatewayImage extends pulumi.ComponentResource {
     const image = new docker_build.Image(
       `${name}-image`,
       {
-        tags: [tag],
+        tags: [tag, commitTag],
         dockerfile: { location: path.join(tempDir, "Dockerfile") },
         context: { location: tempDir },
         load: true,
@@ -214,7 +237,7 @@ export class GatewayImage extends pulumi.ComponentResource {
       { parent: this, dependsOn: [image] },
     );
 
-    return firstTag(image, name);
+    return { imageName: firstTag(image, name), imageRef: image.ref };
   }
 }
 
