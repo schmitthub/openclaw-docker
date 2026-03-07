@@ -26,6 +26,9 @@ config:
       setupCommands:
         - 'onboard --non-interactive --mode local --gateway-token "$OPENCLAW_GATEWAY_TOKEN"'
   # openclaw-deploy:dockerhubPush: true  # Optional: build locally + push to Docker Hub
+  # openclaw-deploy:autoUpdate: true  # Optional: automatic security updates via unattended-upgrades
+  # openclaw-deploy:hetzner:  # Optional: Hetzner-specific options
+  #   backups: true  # automatic daily backups (+20% server cost)
   openclaw-deploy:gatewayToken-dev:
     secure: <encrypted>
 ```
@@ -36,6 +39,8 @@ const cfg = new pulumi.Config();
 cfg.require("provider");           // plain string, fails if missing
 cfg.get("sshKeyId");               // optional string (auto-generates SSH key if omitted)
 cfg.getBoolean("dockerhubPush");   // optional boolean (default: false)
+cfg.getBoolean("autoUpdate");      // optional boolean (default: false)
+cfg.getObject<HetznerConfig>("hetzner"); // optional provider-specific config
 cfg.requireSecret("tailscaleAuthKey"); // secret string
 cfg.requireObject<EgressRule[]>("egressPolicy"); // structured object
 ```

@@ -47,6 +47,11 @@ export interface TcpPortMapping {
   envoyPort: number;
 }
 
+// Provider-specific configuration
+export interface HetznerConfig {
+  backups?: boolean; // automatic daily backups (+20% server cost)
+}
+
 // Full stack configuration
 export interface StackConfig {
   // VPS
@@ -54,6 +59,9 @@ export interface StackConfig {
   serverType: string; // e.g. "cx22" (Hetzner), "s-1vcpu-1gb" (DO), "VM.Standard.A1.Flex" (OCI)
   region?: string; // Required for Hetzner/DO. Oracle auto-discovers availability domain if omitted.
   sshKeyId?: string; // provider-specific SSH key ID or fingerprint (auto-generated if omitted)
+
+  // Provider-specific
+  hetzner?: HetznerConfig;
 
   // Tailscale
   tailscaleAuthKey: string; // secret: one-time auth key

@@ -17,6 +17,7 @@ export interface ServerArgs {
   region?: pulumi.Input<string>; // Required for Hetzner/DO. Oracle auto-discovers availability domain if omitted.
   sshKeyId?: pulumi.Input<string>; // Key ID (Hetzner), fingerprint (DO), or SSH public key content (OCI). Auto-generated if omitted.
   image?: pulumi.Input<string>; // e.g. "ubuntu-24.04" (Hetzner), "ubuntu-24-04-x64" (DO), image OCID (OCI). Oracle auto-discovers if omitted.
+  hetzner?: { backups?: boolean }; // Hetzner-specific options
   // OCI-specific
   compartmentId?: pulumi.Input<string>; // OCI compartment OCID (required for Oracle)
   subnetId?: pulumi.Input<string>; // OCI subnet OCID. Auto-creates VCN + networking if omitted.
@@ -83,6 +84,7 @@ export class Server extends pulumi.ComponentResource {
             serverType: args.serverType,
             location: args.region,
             image: args.image ?? "ubuntu-24.04",
+            backups: args.hetzner?.backups ?? false,
             sshKeys: [sshKeyRef],
             publicNets: [{ ipv4Enabled: true, ipv6Enabled: true }],
           },

@@ -81,11 +81,13 @@ const server = new Server("server", {
   ...(subnetId && { subnetId }),
   ...(ocpus !== undefined && { ocpus }),
   ...(memoryInGbs !== undefined && { memoryInGbs }),
+  hetzner: cfg.getObject<{ backups?: boolean }>("hetzner"),
 });
 
 // 2. Install Docker + fail2ban on the host (Tailscale runs inside gateway containers)
 const bootstrap = new HostBootstrap("bootstrap", {
   connection: server.connection,
+  autoUpdate: cfg.getBoolean("autoUpdate") ?? false,
 });
 
 // 3. Render egress config + generate certificates

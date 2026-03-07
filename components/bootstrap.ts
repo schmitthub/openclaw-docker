@@ -3,6 +3,7 @@ import * as command from "@pulumi/command";
 
 export interface HostBootstrapArgs {
   connection: pulumi.Input<command.types.input.remote.ConnectionArgs>;
+  autoUpdate?: boolean;
 }
 
 export class HostBootstrap extends pulumi.ComponentResource {
@@ -33,6 +34,25 @@ export class HostBootstrap extends pulumi.ComponentResource {
       },
       { parent: this },
     );
+
+    // Step 1a: Enable automatic security updates via unattended-upgrades (opt-in).
+    if (args.autoUpdate) {
+      const UNATTENDED_CMD = [
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades",
+        `printf 'APT::Periodic::Update-Package-Lists "1";\\nAPT::Periodic::Unattended-Upgrade "1";\\n' > /etc/apt/apt.conf.d/20auto-upgrades`,
+        "systemctl enable unattended-upgrades",
+        "systemctl restart unattended-upgrades",
+      ].join(" && ");
+      new command.remote.Command(
+        `${name}-unattended-upgrades`,
+        {
+          connection: args.connection,
+          create: UNATTENDED_CMD,
+          triggers: [UNATTENDED_CMD],
+        },
+        { parent: this, dependsOn: [installDocker] },
+      );
+    }
 
     // Step 1b: Configure SSH AcceptEnv so Pulumi can pass env vars via setenv.
     // Separate resource so it runs even when installDocker is already in state.

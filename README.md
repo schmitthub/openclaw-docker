@@ -403,18 +403,20 @@ pulumi up
 
 Configuration lives in `Pulumi.<stack>.yaml`. See `Pulumi.dev.yaml.example` for a complete example.
 
-| Key                          | Type                                          | Required | Description                                             |
-| ---------------------------- | --------------------------------------------- | -------- | ------------------------------------------------------- |
-| `provider`                   | `"hetzner"` \| `"digitalocean"` \| `"oracle"` | yes      | VPS provider                                            |
-| `serverType`                 | string                                        | yes      | Server type (e.g. `cx22`, `cax21`)                      |
-| `region`                     | string                                        | yes      | Datacenter region (e.g. `fsn1`)                         |
-| `sshKeyId`                   | string                                        | no       | SSH key ID at provider (auto-generated if omitted)      |
-| `tailscaleAuthKey`           | secret                                        | yes      | One-time Tailscale auth key                             |
-| `egressPolicy`               | `EgressRule[]`                                | yes      | User egress rules (additive to hardcoded)               |
-| `gateways`                   | `GatewayConfig[]`                             | yes      | Gateway profile definitions (1+)                        |
-| `dockerhubPush`              | boolean                                       | no       | Build locally and push to Docker Hub (default: `false`) |
-| `gatewayToken-<profile>`     | secret                                        | no       | Auth token override (auto-generated if omitted)         |
-| `gatewaySecretEnv-<profile>` | secret                                        | no       | JSON `{"KEY":"value"}` env vars for init + runtime      |
+| Key                          | Type                                          | Required | Description                                                                    |
+| ---------------------------- | --------------------------------------------- | -------- | ------------------------------------------------------------------------------ |
+| `provider`                   | `"hetzner"` \| `"digitalocean"` \| `"oracle"` | yes      | VPS provider                                                                   |
+| `serverType`                 | string                                        | yes      | Server type (e.g. `cx22`, `cax21`)                                             |
+| `region`                     | string                                        | yes      | Datacenter region (e.g. `fsn1`)                                                |
+| `sshKeyId`                   | string                                        | no       | SSH key ID at provider (auto-generated if omitted)                             |
+| `tailscaleAuthKey`           | secret                                        | yes      | One-time Tailscale auth key                                                    |
+| `egressPolicy`               | `EgressRule[]`                                | yes      | User egress rules (additive to hardcoded)                                      |
+| `gateways`                   | `GatewayConfig[]`                             | yes      | Gateway profile definitions (1+)                                               |
+| `dockerhubPush`              | boolean                                       | no       | Build locally and push to Docker Hub (default: `false`)                        |
+| `autoUpdate`                 | boolean                                       | no       | Enable automatic security updates via `unattended-upgrades` (default: `false`) |
+| `hetzner`                    | object                                        | no       | Hetzner-specific options (see below)                                           |
+| `gatewayToken-<profile>`     | secret                                        | no       | Auth token override (auto-generated if omitted)                                |
+| `gatewaySecretEnv-<profile>` | secret                                        | no       | JSON `{"KEY":"value"}` env vars for init + runtime                             |
 
 **Gateway profile fields:**
 
@@ -427,6 +429,18 @@ Configuration lives in `Pulumi.<stack>.yaml`. See `Pulumi.dev.yaml.example` for 
 | `imageSteps`     | ImageStep[] | Custom Dockerfile RUN instructions (`{run}` pairs, always root)               |
 | `setupCommands`  | string[]    | OpenClaw subcommands run in init container (e.g. `onboard`)                   |
 | `env`            | object      | Extra environment variables                                                   |
+
+**Hetzner-specific options** (`hetzner`):
+
+| Field     | Type    | Description                                                                 |
+| --------- | ------- | --------------------------------------------------------------------------- |
+| `backups` | boolean | Enable Hetzner automatic daily backups (+20% server cost, default: `false`) |
+
+```yaml
+openclaw-deploy:autoUpdate: true
+openclaw-deploy:hetzner:
+  backups: true
+```
 
 ## Component Hierarchy
 

@@ -89,7 +89,7 @@ Per gateway (1+ per server):
 | Component          | Type                            | Provider                             | Purpose                                                                |
 | ------------------ | ------------------------------- | ------------------------------------ | ---------------------------------------------------------------------- |
 | `Server`           | `openclaw:infra:Server`         | `@pulumi/hcloud` + DO + OCI          | Provision VPS, expose IP + connection                                  |
-| `HostBootstrap`    | `openclaw:infra:HostBootstrap`  | `@pulumi/command`                    | Install Docker + fail2ban on bare host                                 |
+| `HostBootstrap`    | `openclaw:infra:HostBootstrap`  | `@pulumi/command`                    | Install Docker + fail2ban + optional unattended-upgrades on bare host  |
 | `EnvoyEgress`      | `openclaw:infra:EnvoyEgress`    | `@pulumi/command`                    | Render envoy.yaml + Corefile, upload configs, generate CA + MITM certs |
 | `GatewayImage`     | `openclaw:build:GatewayImage`   | `@pulumi/docker-build`               | BuildKit image build (Dockerfile + entrypoint rendered locally)        |
 | `TailscaleSidecar` | `openclaw:net:TailscaleSidecar` | `@pulumi/docker` + `@pulumi/command` | Bridge network, sidecar container, health wait, hostname capture       |
@@ -118,18 +118,20 @@ All containers per gateway share a single network namespace via the Tailscale si
 
 Configuration is managed via `pulumi config` / `Pulumi.<stack>.yaml`:
 
-| Key                          | Type                                          | Required | Description                                                |
-| ---------------------------- | --------------------------------------------- | -------- | ---------------------------------------------------------- |
-| `provider`                   | `"hetzner"` \| `"digitalocean"` \| `"oracle"` | yes      | VPS provider                                               |
-| `serverType`                 | string                                        | yes      | Server type (e.g. `cx22`, `cax21`)                         |
-| `region`                     | string                                        | yes      | Datacenter region (e.g. `fsn1`)                            |
-| `sshKeyId`                   | string                                        | no       | SSH key ID or name at provider (auto-generated if omitted) |
-| `tailscaleAuthKey`           | secret                                        | yes      | One-time Tailscale auth key                                |
-| `egressPolicy`               | `EgressRule[]`                                | yes      | User egress rules (additive to hardcoded)                  |
-| `gateways`                   | `GatewayConfig[]`                             | yes      | Gateway profile definitions (1+)                           |
-| `dockerhubPush`              | boolean                                       | no       | Build locally + push to Docker Hub (default: false)        |
-| `gatewayToken-<profile>`     | secret                                        | no       | Auth token override (auto-generated if omitted)            |
-| `gatewaySecretEnv-<profile>` | secret                                        | no       | JSON `{"KEY":"value"}` — env vars for init + runtime       |
+| Key                          | Type                                          | Required | Description                                                           |
+| ---------------------------- | --------------------------------------------- | -------- | --------------------------------------------------------------------- |
+| `provider`                   | `"hetzner"` \| `"digitalocean"` \| `"oracle"` | yes      | VPS provider                                                          |
+| `serverType`                 | string                                        | yes      | Server type (e.g. `cx22`, `cax21`)                                    |
+| `region`                     | string                                        | yes      | Datacenter region (e.g. `fsn1`)                                       |
+| `sshKeyId`                   | string                                        | no       | SSH key ID or name at provider (auto-generated if omitted)            |
+| `tailscaleAuthKey`           | secret                                        | yes      | One-time Tailscale auth key                                           |
+| `egressPolicy`               | `EgressRule[]`                                | yes      | User egress rules (additive to hardcoded)                             |
+| `gateways`                   | `GatewayConfig[]`                             | yes      | Gateway profile definitions (1+)                                      |
+| `dockerhubPush`              | boolean                                       | no       | Build locally + push to Docker Hub (default: false)                   |
+| `autoUpdate`                 | boolean                                       | no       | Automatic security updates via `unattended-upgrades` (default: false) |
+| `hetzner`                    | `HetznerConfig`                               | no       | Hetzner-specific options (`{ backups?: boolean }`)                    |
+| `gatewayToken-<profile>`     | secret                                        | no       | Auth token override (auto-generated if omitted)                       |
+| `gatewaySecretEnv-<profile>` | secret                                        | no       | JSON `{"KEY":"value"}` — env vars for init + runtime                  |
 
 ## Deployment Model
 
