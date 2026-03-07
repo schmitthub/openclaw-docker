@@ -1,0 +1,183 @@
+rules:
+  # ---------------------------------------------------------------------------
+  # Container security — enforce shared netns model
+  # ---------------------------------------------------------------------------
+
+  - id: cap-net-admin-non-sidecar
+    patterns:
+      - pattern: |
+          capabilities: { ..., adds: [..., "NET_ADMIN", ...], ... }
+      - pattern-inside: |
+          new docker.Container(...)
+    paths:
+      exclude:
+        - "**/components/tailscale-sidecar.ts"
+    message: >-
+      CAP_NET_ADMIN grants the ability to modify network firewall rules,
+      routing tables, and interface configuration. Only the Tailscale sidecar
+      should have this capability — granting it to other containers allows
+      an attacker to disable iptables egress restrictions from within.
+    languages: [ts]
+    severity: ERROR
+    metadata:
+      category: security
+      technology: [pulumi, docker]
+      cwe: "CWE-250: Execution with Unnecessary Privileges"
+
+  - id: networks-advanced-non-sidecar
+    pattern: |
+      new docker.Container($NAME, { ..., networksAdvanced: $NET, ... }, ...)
+    paths:
+      exclude:
+        - "**/components/tailscale-sidecar.ts"
+    message: >-
+      Container has its own network stack instead of sharing the sidecar's
+      network namespace via `networkMode`. This gives the container
+      unrestricted egress — it bypasses all iptables REDIRECT and DNS
+      filtering rules enforced by the sidecar.
+    languages: [ts]
+    severity: ERROR
+    metadata:
+      category: security
+      technology: [pulumi, docker]
+      cwe: "CWE-284: Improper Access Control"
+
+  - id: http-proxy-env-var
+    pattern-regex: "HTTPS?_PROXY"
+    paths:
+      include:
+        - "components/"
+    message: >-
+      Proxy env vars are application-level hints that processes can ignore.
+      A malicious or compromised process can bypass HTTP_PROXY/HTTPS_PROXY
+      by connecting directly. Egress must be enforced at the network layer
+      via iptables REDIRECT, not via optional env vars.
+    languages: [ts]
+    severity: ERROR
+    metadata:
+      category: security
+      technology: [pulumi, docker]
+      cwe: "CWE-284: Improper Access Control"
+
+  # ---------------------------------------------------------------------------
+  # Secret handling — prevent secret leakage in Pulumi logs
+  # ---------------------------------------------------------------------------
+
+  - id: remote-command-missing-logging-none
+    patterns:
+      - pattern: |
+          new command.remote.Command($NAME, $ARGS, { ..., additionalSecretOutputs: $SEC, ... })
+      - pattern-not: |
+          new command.remote.Command($NAME, { ..., logging: "none", ... }, { ..., additionalSecretOutputs: $SEC, ... })
+      - pattern-not: |
+          new command.remote.Command($NAME, { ..., environment: $ENV, ... }, { ..., additionalSecretOutputs: $SEC, ... })
+    message: >-
+      Command handles secrets (`additionalSecretOutputs` is set) but has no
+      safe secret transport. Without `logging: "none"` or `environment` (SSH
+      AcceptEnv), secret values may be interpolated into the `create` string
+      and exposed in Pulumi CLI output, state files, or CI logs.
+    languages: [ts]
+    severity: WARNING
+    metadata:
+      category: security
+      technology: [pulumi]
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+
+  - id: local-command-missing-logging-none
+    patterns:
+      - pattern: |
+          new command.local.Command($NAME, $ARGS, { ..., additionalSecretOutputs: $SEC, ... })
+      - pattern-not: |
+          new command.local.Command($NAME, { ..., logging: "none", ... }, { ..., additionalSecretOutputs: $SEC, ... })
+    message: >-
+      Command handles secrets (`additionalSecretOutputs` is set) but lacks
+      `logging: "none"`. The command string and its output may contain secret
+      material that will be exposed in Pulumi CLI output, state files, or
+      CI logs.
+    languages: [ts]
+    severity: WARNING
+    metadata:
+      category: security
+      technology: [pulumi]
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+
+  - id: private-key-missing-secret-outputs
+    patterns:
+      - pattern: |
+          new tls.PrivateKey($NAME, $ARGS, ...)
+      - pattern-not: |
+          new tls.PrivateKey($NAME, $ARGS, { ..., additionalSecretOutputs: $SEC, ... })
+    message: >-
+      Private key resource outputs (privateKeyOpenssh, privateKeyPem) are
+      not marked as secrets. They will be stored in plaintext in Pulumi
+      state and visible to anyone with access to the state backend or
+      `pulumi stack export`.
+    languages: [ts]
+    severity: ERROR
+    metadata:
+      category: security
+      technology: [pulumi, tls]
+      cwe: "CWE-312: Cleartext Storage of Sensitive Information"
+
+  # ---------------------------------------------------------------------------
+  # IaC misconfigurations — security-relevant
+  # ---------------------------------------------------------------------------
+
+  - id: tailscale-userspace-true
+    pattern-regex: "TS_USERSPACE=true"
+    paths:
+      include:
+        - "components/"
+        - "templates/"
+    message: >-
+      Userspace networking bypasses the kernel's netfilter stack. The
+      sidecar's iptables REDIRECT and UDP DROP rules will have no effect,
+      leaving the container with unrestricted egress. Kernel networking
+      (TS_USERSPACE=false) with /dev/net/tun is required.
+    languages: [ts]
+    severity: ERROR
+    metadata:
+      category: security
+      technology: [tailscale, docker]
+      cwe: "CWE-284: Improper Access Control"
+
+  - id: non-malware-blocking-dns
+    patterns:
+      - pattern: |
+          dns: [$IP1, $IP2]
+      - pattern-not: |
+          dns: ["1.1.1.2", "1.0.0.2"]
+      - pattern-not: |
+          dns: [CLOUDFLARE_DNS_PRIMARY, CLOUDFLARE_DNS_SECONDARY]
+      - pattern-inside: |
+          new docker.Container(...)
+    message: >-
+      Non-malware-blocking DNS resolvers allow resolution of known malware,
+      phishing, and C2 domains. Cloudflare's malware-blocking resolvers
+      (1.1.1.2, 1.0.0.2) refuse to resolve these domains, adding a layer
+      of defense even if other controls are bypassed.
+    languages: [ts]
+    severity: WARNING
+    metadata:
+      category: security
+      technology: [docker]
+      cwe: "CWE-284: Improper Access Control"
+
+  - id: entrypoint-missing-gosu-privilege-drop
+    patterns:
+      - pattern-regex: "^exec .*node"
+      - pattern-not-regex: "^exec gosu node"
+    paths:
+      include:
+        - "**/templates/entrypoint.ts"
+    message: >-
+      Entrypoint executes as the node user without `gosu` privilege drop.
+      Without gosu, the process inherits root's UID, which bypasses
+      iptables owner-match rules (uid 0 is excluded from REDIRECT) and
+      grants full CAP_NET_ADMIN access within the shared network namespace.
+    languages: [ts]
+    severity: ERROR
+    metadata:
+      category: security
+      technology: [docker]
+      cwe: "CWE-250: Execution with Unnecessary Privileges"
