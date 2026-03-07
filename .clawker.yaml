@@ -3,7 +3,7 @@
 # Learn more about Clawker at https://clawker.dev; https://docs.clawker.dev; https://github.com/schmitthub/clawker
 
 build:
-  image: "node:bookworm-slim"
+  image: "node:24"
 
   packages:
     - ca-certificates
