@@ -24,6 +24,7 @@ What this gets you above the official sandboxed docker compose offering:
   - [Table of Contents](#table-of-contents)
   - [Try it: Deploy OpenClaw with Telegram and Private Discord server access](#try-it-deploy-openclaw-with-telegram-and-private-discord-server-access)
     - [1) Create your `.env` file](#1-create-your-env-file)
+    - [0) Optional Dockerhub Setup (Recommended)](#0-optional-dockerhub-setup-recommended)
     - [2) Register accounts and create API credentials](#2-register-accounts-and-create-api-credentials)
       - [OpenRouter](#openrouter)
       - [Tailscale](#tailscale)
@@ -46,6 +47,7 @@ What this gets you above the official sandboxed docker compose offering:
   - [Firewall Bypass (SOCKS Proxy)](#firewall-bypass-socks-proxy)
   - [DNS Exfiltration Prevention](#dns-exfiltration-prevention)
   - [Agent Environment Prompt](#agent-environment-prompt)
+  - [Docker Hub Build Mode](#docker-hub-build-mode)
   - [Experimental Runtime Binary Persistence](#experimental-runtime-binary-persistence)
 
 ## Try it: Deploy OpenClaw with Telegram and Private Discord server access
@@ -84,7 +86,22 @@ OCI_USER_ID=
 HCLOUD_TOKEN=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_USER_ID=
+# Optional if using `dockerhubPush: true` in your Pulumi stack config
+DOCKER_REGISTRY_REPO=
+DOCKER_REGISTRY_USER=
+DOCKER_REGISTRY_PASS=
 ```
+
+### 0) Optional Dockerhub Setup (Recommended)
+
+I highly recommend using Docker Hub to push your image to. It makes deployments siginficantly faster over having to build the image on a smaller VPS frequently, and it avoids ugly cache cleanup that builds up on your server and eats away at your disk space.
+
+- Create an account on <https://hub.docker.com/>
+- In your "My Hub" page Create a Repository, for example "openclaw"
+- Set it to private, but public should be okay too it'll just contain your customizations but shouldn't have any secrets in it by default, but do at your own risk.
+- If you chose private: click your profile icon in the top right, go to "Account Settings" > "Personal access tokens" > "Generate new token" with Read,Write,Delete permissions.
+
+Save the repository name (ex: `yourusername/openclaw`), your Docker Hub username, and the generated token to your `.env` file as `DOCKER_REGISTRY_REPO`, `DOCKER_REGISTRY_USER`, and `DOCKER_REGISTRY_PASS` respectively.
 
 ### 2) Register accounts and create API credentials
 
