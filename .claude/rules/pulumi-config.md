@@ -26,6 +26,9 @@ config:
       setupCommands:
         - 'onboard --non-interactive --mode local --gateway-token "$OPENCLAW_GATEWAY_TOKEN"'
   # openclaw-deploy:dockerhubPush: true  # Optional: build locally + push to Docker Hub
+  # openclaw-deploy:autoUpdate: true  # Optional: automatic security updates via unattended-upgrades
+  # openclaw-deploy:hetzner:  # Optional: Hetzner-specific options
+  #   backups: true  # automatic daily backups (+20% server cost)
   openclaw-deploy:gatewayToken-dev:
     secure: <encrypted>
 ```
@@ -36,6 +39,8 @@ const cfg = new pulumi.Config();
 cfg.require("provider");           // plain string, fails if missing
 cfg.get("sshKeyId");               // optional string (auto-generates SSH key if omitted)
 cfg.getBoolean("dockerhubPush");   // optional boolean (default: false)
+cfg.getBoolean("autoUpdate");      // optional boolean (default: false)
+cfg.getObject<HetznerConfig>("hetzner"); // optional provider-specific config (validated at runtime)
 cfg.requireSecret("tailscaleAuthKey"); // secret string
 cfg.requireObject<EgressRule[]>("egressPolicy"); // structured object
 ```
@@ -55,14 +60,14 @@ cfg.requireObject<EgressRule[]>("egressPolicy"); // structured object
 
 ## Component Argument Patterns
 Components accept typed args interfaces (5 per gateway, plus shared infra):
-- `ServerArgs`: provider, serverType, region?, sshKeyId?, compartmentId?, subnetId?, ocpus?, memoryInGbs?
-- `HostBootstrapArgs`: connection
+- `ServerArgs`: provider, serverType, region?, sshKeyId?, image?, hetzner?, compartmentId?, subnetId?, ocpus?, memoryInGbs?
+- `HostBootstrapArgs`: connection, autoUpdate?
 - `EnvoyEgressArgs`: connection, egressPolicy
-- `GatewayImageArgs`: dockerHost, profile, version, installBrowser?, imageSteps?
+- `GatewayImageArgs`: connection, dockerHost, profile, version, installBrowser?, imageSteps?, dockerhubPush?
 - `TailscaleSidecarArgs`: connection, dockerHost, profile, port, tailscaleAuthKey, tcpPortMappings?
 - `EnvoyProxyArgs`: connection, dockerHost, sidecarContainerName, envoyConfigPath, envoyConfigHash, inspectedDomains, profile
 - `GatewayInitArgs`: connection, profile, imageName, setupCommands?, secretEnv?, gatewayToken, tailscaleHostname
-- `GatewayArgs`: dockerHost, profile, port, imageName, sidecarContainerName, tailscaleHostname, env?, secretEnv?, auth, initHash
+- `GatewayArgs`: dockerHost, profile, port, imageName, sidecarContainerName, tailscaleHostname, corefilePath, env?, secretEnv?, auth, initHash, configHash, imageDigest
 
 Security-critical gateway config keys (`gateway.mode`, `gateway.auth.*`, `gateway.trustedProxies`, `discovery.mdns.mode`) are set by `GatewayInit` and **cannot be overridden** by user `setupCommands`.
 

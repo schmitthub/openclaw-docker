@@ -1,4 +1,15 @@
 repos:
+  # Pre-commit hooks — basic hygiene (trailing whitespace, EOL, YAML syntax, merge conflicts, private keys)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0 # Use the ref you want to point at
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: detect-private-key
+        exclude: ^tests/
+
   # Prettier — format TS/JS/JSON/YAML/MD (reads .prettierrc + .prettierignore)
   - repo: local
     hooks:
@@ -39,6 +50,17 @@ repos:
       - id: vitest
         name: vitest
         entry: npx vitest run
+        language: system
+        types: [ts]
+        pass_filenames: false
+
+  # Semgrep — SAST for IaC (uses .semgrep/ + p/security-audit rulesets)
+  - repo: local
+    hooks:
+      - id: semgrep
+        name: Semgrep SAST
+        # Expected version: 1.146.0 (must match CI image tag in security.yml)
+        entry: semgrep scan --config .semgrep/ --config p/security-audit --error
         language: system
         types: [ts]
         pass_filenames: false

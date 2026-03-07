@@ -10,6 +10,41 @@ permissions:
   actions: read
 
 jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      # Pin version for reproducibility. Update periodically:
+      #   1. Check latest: https://hub.docker.com/r/semgrep/semgrep/tags
+      #   2. Update tag here AND expected version in .pre-commit-config.yaml
+      image: semgrep/semgrep:1.146.0
+    timeout-minutes: 10
+    if: (github.actor != 'dependabot[bot]')
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      # PRs: incremental scan (only new findings since base branch)
+      # Push to main: full scan (no baseline)
+      - name: Semgrep
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            echo "Incremental scan against base $BASE_SHA"
+            semgrep scan --sarif --output semgrep.sarif --baseline-commit "$BASE_SHA" --config .semgrep/ --config p/security-audit --error
+          else
+            echo "Full scan (no baseline)"
+            semgrep scan --sarif --output semgrep.sarif --config .semgrep/ --config p/security-audit --error
+          fi
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+      - name: Upload Semgrep SARIF
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@b5ebac6f4c00c8ccddb7cdcd45fdb248329f808a # v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
   gitleaks:
     name: Gitleaks Secrets
     runs-on: ubuntu-latest

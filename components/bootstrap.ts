@@ -3,6 +3,7 @@ import * as command from "@pulumi/command";
 
 export interface HostBootstrapArgs {
   connection: pulumi.Input<command.types.input.remote.ConnectionArgs>;
+  autoUpdate?: boolean;
 }
 
 export class HostBootstrap extends pulumi.ComponentResource {
@@ -34,6 +35,28 @@ export class HostBootstrap extends pulumi.ComponentResource {
       { parent: this },
     );
 
+    // Step 1a: Enable automatic security updates via unattended-upgrades (opt-in).
+    let enableAutoUpdates: command.remote.Command | undefined;
+    if (args.autoUpdate) {
+      const UNATTENDED_CMD = [
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades",
+        `printf 'APT::Periodic::Update-Package-Lists "1";\\nAPT::Periodic::Unattended-Upgrade "1";\\n' > /etc/apt/apt.conf.d/20auto-upgrades`,
+        "systemctl enable unattended-upgrades",
+        "systemctl restart unattended-upgrades",
+        "sleep 1",
+        "systemctl is-active unattended-upgrades",
+      ].join(" && ");
+      enableAutoUpdates = new command.remote.Command(
+        `${name}-unattended-upgrades`,
+        {
+          connection: args.connection,
+          create: UNATTENDED_CMD,
+          triggers: [UNATTENDED_CMD],
+        },
+        { parent: this, dependsOn: [installDocker] },
+      );
+    }
+
     // Step 1b: Configure SSH AcceptEnv so Pulumi can pass env vars via setenv.
     // Separate resource so it runs even when installDocker is already in state.
     // Uses sshd_config.d/ for global scope (avoids Match block scoping issues).
@@ -41,7 +64,7 @@ export class HostBootstrap extends pulumi.ComponentResource {
     const ACCEPT_ENV_CMD = [
       "mkdir -p /etc/ssh/sshd_config.d",
       "echo 'AcceptEnv *' > /etc/ssh/sshd_config.d/99-accept-env.conf",
-      "(systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || kill -HUP $(cat /var/run/sshd.pid 2>/dev/null) 2>/dev/null || true)",
+      "(systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || kill -HUP $(cat /var/run/sshd.pid 2>/dev/null) 2>/dev/null || echo 'WARNING: sshd reload failed — AcceptEnv may not take effect until next restart' >&2)",
     ].join(" && ");
     const configureAcceptEnv = new command.remote.Command(
       `${name}-accept-env`,
@@ -53,7 +76,12 @@ export class HostBootstrap extends pulumi.ComponentResource {
       { parent: this, dependsOn: [installDocker] },
     );
 
-    this.dockerReady = configureAcceptEnv.stdout.apply(() => "ready");
+    // dockerReady waits for all bootstrap steps
+    const bootstrapOutputs: pulumi.Output<string>[] = [
+      configureAcceptEnv.stdout,
+    ];
+    if (enableAutoUpdates) bootstrapOutputs.push(enableAutoUpdates.stdout);
+    this.dockerReady = pulumi.all(bootstrapOutputs).apply(() => "ready");
 
     const conn = pulumi.output(args.connection);
     const hostIp = conn.apply((c) => c.host);

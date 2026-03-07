@@ -12,7 +12,13 @@ import {
   GatewayInit,
   Gateway,
 } from "./components";
-import type { EgressRule, GatewayConfig, VpsProvider } from "./config/types";
+import {
+  validateHetznerConfig,
+  type EgressRule,
+  type GatewayConfig,
+  type HetznerConfig,
+  type VpsProvider,
+} from "./config/types";
 import { PROVIDERS } from "./config/defaults";
 import { renderAgentPrompt } from "./templates";
 
@@ -71,6 +77,15 @@ if (duplicates.length > 0) {
 // --- Component Composition ---
 // Server → HostBootstrap → {EnvoyEgress, GatewayImage, TailscaleSidecar} → EnvoyProxy → GatewayInit → Gateway
 
+// Provider-specific config validation
+const rawHetznerConfig = cfg.getObject<HetznerConfig>("hetzner");
+let hetznerConfig: HetznerConfig | undefined;
+if (rawHetznerConfig !== undefined) {
+  const result = validateHetznerConfig(rawHetznerConfig, provider);
+  for (const w of result.warnings) pulumi.log.warn(w);
+  hetznerConfig = provider === "hetzner" ? result.config : undefined;
+}
+
 // 1. Provision VPS
 const server = new Server("server", {
   provider,
@@ -81,11 +96,13 @@ const server = new Server("server", {
   ...(subnetId && { subnetId }),
   ...(ocpus !== undefined && { ocpus }),
   ...(memoryInGbs !== undefined && { memoryInGbs }),
+  hetzner: hetznerConfig,
 });
 
 // 2. Install Docker + fail2ban on the host (Tailscale runs inside gateway containers)
 const bootstrap = new HostBootstrap("bootstrap", {
   connection: server.connection,
+  autoUpdate: cfg.getBoolean("autoUpdate") ?? false,
 });
 
 // 3. Render egress config + generate certificates
