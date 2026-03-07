@@ -104,7 +104,7 @@ export class GatewayImage extends pulumi.ComponentResource {
         buildOnPreview: false,
         registries: [
           {
-            address: repo,
+            address: "docker.io",
             username,
             password: pulumi.secret(password),
           },
@@ -175,7 +175,7 @@ export class GatewayImage extends pulumi.ComponentResource {
         "(pulumi/pulumi-docker-build#65). To reclaim space, SSH into the VPS and run:",
         "",
         "  docker ps --filter name=buildx_buildkit -q \\",
-        "    | xargs -r -I{} docker exec {} buildctl prune --keep-storage 2048  # MB (~2GB)",
+        "    | xargs -r -I{} docker exec {} buildctl prune --keep-storage=2GB",
         "",
         "To avoid this, set `dockerhubPush: true` in stack config to build locally",
         "and push to Docker Hub instead.",
