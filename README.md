@@ -24,8 +24,8 @@ What this gets you above the official sandboxed docker compose offering:
   - [Table of Contents](#table-of-contents)
   - [Try it: Deploy OpenClaw with Telegram and Private Discord server access](#try-it-deploy-openclaw-with-telegram-and-private-discord-server-access)
     - [1) Create your `.env` file](#1-create-your-env-file)
-    - [0) Optional Dockerhub Setup (Recommended)](#0-optional-dockerhub-setup-recommended)
-    - [2) Register accounts and create API credentials](#2-register-accounts-and-create-api-credentials)
+    - [2) Optional Dockerhub Setup (Recommended)](#2-optional-dockerhub-setup-recommended)
+    - [3) Register accounts and create API credentials](#3-register-accounts-and-create-api-credentials)
       - [OpenRouter](#openrouter)
       - [Tailscale](#tailscale)
       - [Hetzner Cloud](#hetzner-cloud)
@@ -33,10 +33,10 @@ What this gets you above the official sandboxed docker compose offering:
       - [Telegram](#telegram)
       - [Brave Search API](#brave-search-api)
       - [Pulumi](#pulumi)
-    - [3) Set up and initialize the Pulumi stack](#3-set-up-and-initialize-the-pulumi-stack)
-    - [4) Set provider and secret config in Pulumi](#4-set-provider-and-secret-config-in-pulumi)
-    - [5) Deploy and verify](#5-deploy-and-verify)
-    - [6) Post-deploy operational notes](#6-post-deploy-operational-notes)
+    - [4) Set up and initialize the Pulumi stack](#4-set-up-and-initialize-the-pulumi-stack)
+    - [5) Set provider and secret config in Pulumi](#5-set-provider-and-secret-config-in-pulumi)
+    - [6) Deploy and verify](#6-deploy-and-verify)
+    - [7) Post-deploy operational notes](#7-post-deploy-operational-notes)
   - [Architecture](#architecture)
   - [Threat Model](#threat-model)
   - [Prerequisites](#prerequisites)
@@ -92,7 +92,7 @@ DOCKER_REGISTRY_USER=
 DOCKER_REGISTRY_PASS=
 ```
 
-### 0) Optional Dockerhub Setup (Recommended)
+### 2) Optional Dockerhub Setup (Recommended)
 
 I highly recommend using Docker Hub to push your image to. It makes deployments siginficantly faster over having to build the image on a smaller VPS frequently, and it avoids ugly cache cleanup that builds up on your server and eats away at your disk space.
 
@@ -103,7 +103,9 @@ I highly recommend using Docker Hub to push your image to. It makes deployments 
 
 Save the repository name (ex: `yourusername/openclaw`), your Docker Hub username, and the generated token to your `.env` file as `DOCKER_REGISTRY_REPO`, `DOCKER_REGISTRY_USER`, and `DOCKER_REGISTRY_PASS` respectively.
 
-### 2) Register accounts and create API credentials
+> **Multi-platform builds:** By default, Docker Hub mode builds for your local machine's architecture only (e.g. arm64 on Apple Silicon). If you deploy to both amd64 and arm64 VPS types, set `multiPlatform: true` in your stack config — but be aware the **first build takes ~30 minutes** due to QEMU cross-compilation. Subsequent builds are fast thanks to registry-backed caching. See [Multi-platform builds](#multi-platform-builds) for details.
+
+### 3) Register accounts and create API credentials
 
 > Tip: As you complete each subsection, immediately paste values into your `.env` file.
 
@@ -193,7 +195,7 @@ Create and configure your Pulumi account:
 - [Create](https://app.pulumi.com/signup) a Pulumi account (free tier is enough for this project). Switch to **individual** after signing in.
 - [Install Pulumi CLI](https://www.pulumi.com/docs/get-started/download-install/) and authenticate from your operator machine (`pulumi login`).
 
-### 3) Set up and initialize the Pulumi stack
+### 4) Set up and initialize the Pulumi stack
 
 Copy `Pulumi.dev.yaml.example` to `Pulumi.<your-fave-name>.yaml`.
 
@@ -213,7 +215,7 @@ pulumi stack init openclaw
 pulumi stack select openclaw
 ```
 
-### 4) Set provider and secret config in Pulumi
+### 5) Set provider and secret config in Pulumi
 
 This is assuming you have set the environment variables collected in your `.env` file:
 
@@ -228,7 +230,7 @@ pulumi config set --secret tailscaleAuthKey $TS_AUTHKEY
 pulumi config set --secret gatewaySecretEnv-main "{\"OPENROUTER_API_KEY\":\"$OPENROUTER_API_KEY\",\"BRAVE_API_KEY\":\"$BRAVE_API_KEY\",\"DISCORD_BOT_TOKEN\":\"$DISCORD_BOT_TOKEN\",\"DISCORD_USER_ID\":\"$DISCORD_USER_ID\",\"DISCORD_SERVER_ID\":\"$DISCORD_SERVER_ID\",\"TELEGRAM_BOT_TOKEN\":\"$TELEGRAM_BOT_TOKEN\",\"TELEGRAM_USER_ID\":\"$TELEGRAM_USER_ID\"}"
 ```
 
-### 5) Deploy and verify
+### 6) Deploy and verify
 
 ```bash
 pulumi preview --stack openclaw # review planned resource changes
@@ -253,7 +255,7 @@ pulumi stack output gatewayServices --show-secrets # shows service urls w/ gatew
 
 If all goes well, you now have an operational OpenClaw gateway with Tailscale access, Envoy egress filtering, and runtime binary persistence.
 
-### 6) Post-deploy operational notes
+### 7) Post-deploy operational notes
 
 - If you install runtime binaries or change config, restart the gateway container. `openclaw gateway restart` will not work in this deployment model. Use SSH and run: `ssh root@main.yourtsns.ts.net "kill 1"`.
 - To add a domain to the Envoy whitelist, update `egressPolicy` and run `pulumi up` again. Firewall updates only take a few seconds to a minute to propogate.
