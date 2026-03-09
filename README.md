@@ -259,7 +259,7 @@ If all goes well, you now have an operational OpenClaw gateway with Tailscale ac
 
 - If you install runtime binaries or change config, restart the gateway container. `openclaw gateway restart` will not work in this deployment model. Use SSH and run: `ssh root@main.yourtsns.ts.net "kill 1"`.
 - To add a domain to the Envoy whitelist, update `egressPolicy` and run `pulumi up` again. Firewall updates only take a few seconds to a minute to propogate.
-- For one-off downloads without updating the whitelist, SSH in as root and use the firewall bypass: `ssh root@main.yourtsns.ts.net "firewall-bypass 30"` then from inside the container: `curl --socks5 localhost:9100 https://example.com/file.tar.gz -o file.tar.gz`. Your agent will already know about this and will most likely ask you if it can use the bypass when it encounters blocked destinations.
+- For one-off downloads without updating the whitelist, SSH in as root and use the firewall bypass: `ssh root@main.yourtsns.ts.net "firewall-bypass 30"`. The proxy runs in the foreground and logs connections in real-time. From another session or from the agent: `proxychains4 -f /run/firewall-bypass-proxychains.conf curl https://example.com/file.tar.gz -o file.tar.gz` or `curl --proxy socks5h://localhost:9100 https://example.com/file.tar.gz -o file.tar.gz`. Your agent will already know about this and will most likely ask you if it can use the bypass when it encounters blocked destinations.
 - If you want a config value to persist across rebuilds, keep it in `setupCommands`.
 - Removing a `setupCommands` entry does not unset an already-written OpenClaw config value. Unset it manually, then restart the container.
 
@@ -508,24 +508,24 @@ SSH/TCP rules use per-rule port mapping: each rule gets a dedicated Envoy listen
 
 ## Firewall Bypass (SOCKS Proxy)
 
-The Envoy egress whitelist requires `pulumi up` to add new domains. For one-off requests this is cumbersome. The `firewall-bypass` script (root-only, chmod 700) starts a temporary SSH SOCKS proxy so your agent can reach any destination temporarily without modifying iptables or the egress policy. Your agent will already know to ask you to open the bypass (or add a permanent whitelist entry) and how to make an outbound request when it encounters blocked destinations.
+The Envoy egress whitelist requires `pulumi up` to add new domains. For one-off requests this is cumbersome. The `firewall-bypass` script (root-only, chmod 700) starts a temporary Dante SOCKS5 proxy so your agent can reach any destination temporarily without modifying iptables or the egress policy. Your agent will already know to ask you to open the bypass (or add a permanent whitelist entry) and how to make an outbound request when it encounters blocked destinations.
 
-**How it works:** The script runs `ssh -D 127.0.0.1:9100 -f -N root@127.0.0.1 -p 2222`. Since the SSH process runs as root (uid 0), its outbound traffic hits the iptables `RETURN` rule for root and bypasses the Envoy REDIRECT. No `CAP_NET_ADMIN`, no iptables changes.
+**How it works:** The script starts a Dante SOCKS5 proxy on `localhost:9100`. Since `danted` runs as root (uid 0), its outbound traffic hits the iptables `RETURN` rule for root and bypasses the Envoy REDIRECT. The proxy runs in the **foreground** and logs connections in real-time — Ctrl+C or session disconnect kills it immediately. No `CAP_NET_ADMIN`, no iptables changes.
 
 ```bash
-# SSH into the gateway as root
+# SSH into the gateway as root (one session for the proxy)
 ssh root@<device_tailnetdomain>.ts.net
 
-# Start SOCKS proxy (default 30s timeout)
+# Start SOCKS proxy (default 30s timeout, runs in foreground)
 firewall-bypass
 
 # Start with 2-minute timeout
 firewall-bypass 120
 
-# Check if proxy is active
+# Check if proxy is active (from another session)
 firewall-bypass list
 
-# Kill proxy immediately
+# Kill proxy (from another session)
 firewall-bypass stop
 ```
 
@@ -535,7 +535,16 @@ Or as a one-liner from your operator machine:
 ssh root@main.yourtsns.ts.net "firewall-bypass 30"
 ```
 
-The proxy auto-kills after the timeout. PID is tracked in `/run/firewall-bypass.pid`. Re-running while active is idempotent (shows status and exits). The `node` user cannot execute the script (chmod 700).
+Once the proxy is running, use `proxychains4` (recommended) or explicit SOCKS5 flags:
+
+```bash
+proxychains4 -f /run/firewall-bypass-proxychains.conf curl https://example.com
+curl --proxy socks5h://localhost:9100 https://example.com
+```
+
+> **Note:** Use `socks5h://` (not `socks5://`) so DNS resolves through the proxy. The proxychains config file only exists while the proxy is running.
+
+The proxy auto-kills after the timeout. PID is tracked in `/run/firewall-bypass.pid`. Re-running while active is idempotent (shows status and exits). The `node` user cannot execute the script (chmod 700), but once the proxy is running, it is accessible to all users in the shared network namespace — the timeout is the primary security boundary.
 
 ## DNS Exfiltration Prevention
 

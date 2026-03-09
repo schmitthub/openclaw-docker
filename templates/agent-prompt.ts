@@ -18,10 +18,7 @@ The bypass opens a SOCKS5 proxy on \`localhost:${BYPASS_SOCKS_PORT}\`. Use any m
 **proxychains4** (recommended — works with any command transparently):
 \`\`\`bash
 proxychains4 -f /run/firewall-bypass-proxychains.conf curl https://example.com
-proxychains4 -f /run/firewall-bypass-proxychains.conf wget https://example.com/file.tar.gz
 proxychains4 -f /run/firewall-bypass-proxychains.conf git clone https://github.com/user/repo.git
-proxychains4 -f /run/firewall-bypass-proxychains.conf npm install some-package
-proxychains4 -f /run/firewall-bypass-proxychains.conf pip install some-package
 \`\`\`
 
 **Explicit proxy flags** (when you only need one command):

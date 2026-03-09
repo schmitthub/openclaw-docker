@@ -65,6 +65,12 @@ stop_proxy() {
       return 0
     fi
     if kill -0 "$DANTED_PID" 2>/dev/null; then
+      # Verify it's actually danted, not a reused PID
+      if ! grep -q 'danted' "/proc/$DANTED_PID/cmdline" 2>/dev/null; then
+        echo "WARN: PID $DANTED_PID is not danted (stale pidfile), removing" >&2
+        remove_files
+        return 0
+      fi
       kill_gracefully "$DANTED_PID" "danted"
       echo "Stopped firewall bypass proxy (PID $DANTED_PID)"
     else
@@ -176,12 +182,12 @@ socks5 127.0.0.1 $SOCKS_PORT
 PCEOF
   chmod 644 "$PROXYCHAINS_CONF"
 
+  # Set trap BEFORE starting danted so signals during startup still clean up
+  trap 'set +e; echo ""; echo "Proxy stopped (interrupted)"; cleanup; exit 0' INT TERM HUP
+
   # Start danted in background
   danted -f "$DANTED_CONF" &
   DANTED_PID=$!
-
-  # Set trap IMMEDIATELY so Ctrl+C during startup also cleans up
-  trap 'echo ""; echo "Proxy stopped (interrupted)"; cleanup; exit 0' INT TERM HUP
 
   # Wait for SOCKS port to be ready
   for _i in 1 2 3 4 5 6; do
@@ -197,8 +203,7 @@ PCEOF
   done
   if ! echo > /dev/tcp/127.0.0.1/$SOCKS_PORT 2>/dev/null; then
     echo "ERROR: SOCKS port $SOCKS_PORT not listening after 3s" >&2
-    kill_gracefully "$DANTED_PID" "danted"
-    remove_files
+    cleanup
     exit 1
   fi
 

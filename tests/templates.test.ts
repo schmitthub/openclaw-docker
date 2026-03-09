@@ -715,18 +715,22 @@ describe("renderFirewallBypass", () => {
   });
 
   it("runs in foreground with trap and wait for cleanup", () => {
-    expect(script).toContain("trap");
+    expect(script).toContain("trap '");
     expect(script).toContain("INT TERM HUP");
     expect(script).toContain('wait "$DANTED_PID"');
     expect(script).not.toContain("disown");
   });
 
-  it("sets trap before readiness loop (not after)", () => {
-    const trapIdx = script.indexOf("trap");
-    const loopIdx = script.indexOf("for _i in");
+  it("trap handler disables set -e to survive closed stderr on HUP", () => {
+    expect(script).toContain("trap 'set +e;");
+  });
+
+  it("sets trap before danted starts (not after)", () => {
+    const trapIdx = script.indexOf("trap '");
+    const dantedIdx = script.indexOf('danted -f "$DANTED_CONF" &');
     expect(trapIdx).toBeGreaterThan(0);
-    expect(loopIdx).toBeGreaterThan(0);
-    expect(trapIdx).toBeLessThan(loopIdx);
+    expect(dantedIdx).toBeGreaterThan(0);
+    expect(trapIdx).toBeLessThan(dantedIdx);
   });
 
   it("verifies kill succeeded with SIGKILL fallback", () => {
@@ -788,6 +792,40 @@ describe("renderFirewallBypass", () => {
     expect(script).toContain("kill_gracefully()");
     expect(script).toContain("after SIGTERM, sending SIGKILL");
     expect(script).toContain("failed to kill");
+  });
+
+  it("makes proxychains config world-readable", () => {
+    expect(script).toContain('chmod 644 "$PROXYCHAINS_CONF"');
+  });
+
+  it("stop_proxy delegates to kill_gracefully for clean shutdown", () => {
+    const stopFn = script.slice(
+      script.indexOf("stop_proxy()"),
+      script.indexOf("list_proxy()"),
+    );
+    expect(stopFn).toContain("kill_gracefully");
+  });
+
+  it("stop_proxy verifies process is danted before killing (PID reuse protection)", () => {
+    const stopFn = script.slice(
+      script.indexOf("stop_proxy()"),
+      script.indexOf("list_proxy()"),
+    );
+    expect(stopFn).toContain("/proc/$DANTED_PID/cmdline");
+    expect(stopFn).toContain("is not danted");
+  });
+
+  it("fails with clear error if no default route found", () => {
+    expect(script).toContain("cannot determine default route interface");
+  });
+
+  it("readiness-loop failure calls cleanup() for consistent error handling", () => {
+    // After the readiness loop, failure should call cleanup() not separate kill+remove
+    const readinessError = script.slice(
+      script.indexOf("SOCKS port $SOCKS_PORT not listening"),
+    );
+    const nextLines = readinessError.slice(0, readinessError.indexOf("fi"));
+    expect(nextLines).toContain("cleanup");
   });
 
   it("warns on timeout exceeding 1 hour", () => {
