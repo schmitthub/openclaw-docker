@@ -313,6 +313,8 @@ curl --proxy socks5h://localhost:9100 https://example.com
 - Auto-kills after configurable timeout (default 30s)
 - PID tracked in `/run/firewall-bypass.pid`
 - Idempotent: re-running while active shows status and exits
+- Auto-detects external network interface from `/proc/net/route` (works on Hetzner, Oracle, DigitalOcean)
+- All Dante processes run as root (`user.unprivileged: root`) — ensures outbound sockets bypass iptables owner-match
 - Connection logging to stderr in real-time (operator visibility)
 
 ## Agent Environment Prompt
