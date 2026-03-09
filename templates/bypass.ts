@@ -1,35 +1,61 @@
 import {
   BYPASS_SOCKS_PORT,
   DEFAULT_BYPASS_TIMEOUT_SECS,
-  SSHD_PORT,
 } from "../config/defaults";
 
 export function renderFirewallBypass(): string {
   return `#!/bin/bash
 set -euo pipefail
 
-# Root-only SOCKS proxy for temporary firewall bypass.
-# Starts an SSH SOCKS proxy (root-owned, bypasses iptables RETURN rule).
+# Root-only SOCKS5 proxy for temporary firewall bypass.
+# Starts a Dante SOCKS5 proxy (root-owned, bypasses iptables RETURN rule).
+# TCP only — UDP ASSOCIATE is available but no user-space UDP client is installed.
+# The proxy runs in the foreground; Ctrl+C or session disconnect kills it.
 # Usage: firewall-bypass [timeout_secs|stop|list]
 
 SOCKS_PORT=${BYPASS_SOCKS_PORT}
 PIDFILE="/run/firewall-bypass.pid"
+DANTED_CONF="/run/firewall-bypass-danted.conf"
+PROXYCHAINS_CONF="/run/firewall-bypass-proxychains.conf"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "ERROR: firewall-bypass must be run as root" >&2
   exit 1
 fi
 
+cleanup() {
+  if [ -n "\${DANTED_PID:-}" ]; then
+    if kill -0 "$DANTED_PID" 2>/dev/null; then
+      kill "$DANTED_PID" 2>/dev/null || true
+      sleep 0.2
+      if kill -0 "$DANTED_PID" 2>/dev/null; then
+        kill -9 "$DANTED_PID" 2>/dev/null || true
+      fi
+    fi
+  fi
+  rm -f "$PIDFILE" "$DANTED_CONF" "$PROXYCHAINS_CONF"
+}
+
 stop_proxy() {
   if [ -f "$PIDFILE" ]; then
-    PID=$(cat "$PIDFILE")
-    if kill -0 "$PID" 2>/dev/null; then
-      kill "$PID" 2>/dev/null || true
-      echo "Stopped firewall bypass proxy (PID $PID)"
-    else
-      echo "Proxy not running (stale PID $PID)"
+    DANTED_PID=$(cat "$PIDFILE" 2>/dev/null)
+    if ! echo "$DANTED_PID" | grep -qE '^[0-9]+$'; then
+      echo "WARN: corrupt pidfile, removing" >&2
+      rm -f "$PIDFILE" "$DANTED_CONF" "$PROXYCHAINS_CONF"
+      return 0
     fi
-    rm -f "$PIDFILE"
+    if kill -0 "$DANTED_PID" 2>/dev/null; then
+      kill "$DANTED_PID" 2>/dev/null || true
+      sleep 0.2
+      if kill -0 "$DANTED_PID" 2>/dev/null; then
+        echo "WARN: proxy still running (PID $DANTED_PID), sending SIGKILL" >&2
+        kill -9 "$DANTED_PID" 2>/dev/null || true
+      fi
+      echo "Stopped firewall bypass proxy (PID $DANTED_PID)"
+    else
+      echo "Proxy not running (stale PID $DANTED_PID)"
+    fi
+    rm -f "$PIDFILE" "$DANTED_CONF" "$PROXYCHAINS_CONF"
   else
     echo "No active firewall bypass proxy"
   fi
@@ -37,12 +63,14 @@ stop_proxy() {
 
 list_proxy() {
   if [ -f "$PIDFILE" ]; then
-    PID=$(cat "$PIDFILE")
-    if kill -0 "$PID" 2>/dev/null; then
-      echo "Firewall bypass proxy ACTIVE on localhost:$SOCKS_PORT (PID $PID)"
+    DANTED_PID=$(cat "$PIDFILE" 2>/dev/null)
+    if ! echo "$DANTED_PID" | grep -qE '^[0-9]+$'; then
+      rm -f "$PIDFILE" "$DANTED_CONF" "$PROXYCHAINS_CONF"
+    elif kill -0 "$DANTED_PID" 2>/dev/null; then
+      echo "Firewall bypass proxy ACTIVE on localhost:$SOCKS_PORT (PID $DANTED_PID)"
       return 0
     else
-      rm -f "$PIDFILE"
+      rm -f "$PIDFILE" "$DANTED_CONF" "$PROXYCHAINS_CONF"
     fi
   fi
   echo "No active firewall bypass proxy"
@@ -52,39 +80,117 @@ list_proxy() {
 start_proxy() {
   TIMEOUT="\${1:-${DEFAULT_BYPASS_TIMEOUT_SECS}}"
 
+  # Validate timeout is a positive integer
+  if ! echo "$TIMEOUT" | grep -qE '^[0-9]+$' || [ "$TIMEOUT" -eq 0 ]; then
+    echo "ERROR: timeout must be a positive integer (seconds), got: $TIMEOUT" >&2
+    exit 1
+  fi
+  if [ "$TIMEOUT" -gt 3600 ]; then
+    echo "WARN: timeout of \${TIMEOUT}s (>1h) — proxy will remain open for a long time" >&2
+  fi
+
   # Idempotent: if already running, show status and exit
   if [ -f "$PIDFILE" ]; then
-    PID=$(cat "$PIDFILE")
-    if kill -0 "$PID" 2>/dev/null; then
-      echo "Firewall bypass proxy already running on localhost:$SOCKS_PORT (PID $PID)"
+    DANTED_PID=$(cat "$PIDFILE" 2>/dev/null)
+    if echo "$DANTED_PID" | grep -qE '^[0-9]+$' && kill -0 "$DANTED_PID" 2>/dev/null; then
+      echo "Firewall bypass proxy already running on localhost:$SOCKS_PORT (PID $DANTED_PID)"
       echo "Use 'firewall-bypass stop' to kill it, or wait for auto-timeout"
       return 0
     fi
-    rm -f "$PIDFILE"
+    rm -f "$PIDFILE" "$DANTED_CONF" "$PROXYCHAINS_CONF"
   fi
 
-  if ! ssh -D "127.0.0.1:$SOCKS_PORT" -f -N \\
-    -o StrictHostKeyChecking=no \\
-    -o UserKnownHostsFile=/dev/null \\
-    root@127.0.0.1 -p ${SSHD_PORT}; then
-    echo "ERROR: Failed to start SOCKS proxy — is sshd running on port ${SSHD_PORT}?" >&2
+  # Pre-check: is the SOCKS port already in use?
+  if echo > /dev/tcp/127.0.0.1/$SOCKS_PORT 2>/dev/null; then
+    echo "ERROR: port $SOCKS_PORT is already in use" >&2
+    echo "  Check with: ss -tlnp | grep $SOCKS_PORT" >&2
     exit 1
   fi
 
-  # Find the ssh process we just started
-  PID=$(pgrep -f "ssh -D 127.0.0.1:$SOCKS_PORT" | head -1 || true)
-  if [ -z "$PID" ]; then
-    echo "ERROR: Failed to find SOCKS proxy process" >&2
+  # Write Dante config (loopback-only, no auth, logging to stderr)
+  cat > "$DANTED_CONF" <<DEOF
+logoutput: stderr
+internal: 127.0.0.1 port = $SOCKS_PORT
+external: eth0
+clientmethod: none
+socksmethod: none
+user.privileged: root
+user.unprivileged: nobody
+
+client pass {
+  from: 127.0.0.0/8 to: 0.0.0.0/0
+  log: connect disconnect error
+}
+
+socks pass {
+  from: 127.0.0.0/8 to: 0.0.0.0/0
+  command: connect udpassociate
+  protocol: tcp udp
+  log: connect disconnect error
+}
+
+socks pass {
+  from: 127.0.0.0/8 to: 0.0.0.0/0
+  command: bindreply udpreply
+  log: connect disconnect error
+}
+DEOF
+
+  # Write proxychains config for node user convenience
+  cat > "$PROXYCHAINS_CONF" <<PCEOF
+# Auto-generated by firewall-bypass — do not edit
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+[ProxyList]
+socks5 127.0.0.1 $SOCKS_PORT
+PCEOF
+  chmod 644 "$PROXYCHAINS_CONF"
+
+  # Start danted in background
+  danted -f "$DANTED_CONF" &
+  DANTED_PID=$!
+
+  # Wait for SOCKS port to be ready
+  for _i in 1 2 3 4 5 6; do
+    if ! kill -0 "$DANTED_PID" 2>/dev/null; then
+      echo "ERROR: danted exited immediately — check config" >&2
+      rm -f "$DANTED_CONF" "$PROXYCHAINS_CONF"
+      exit 1
+    fi
+    if echo > /dev/tcp/127.0.0.1/$SOCKS_PORT 2>/dev/null; then
+      break
+    fi
+    sleep 0.5
+  done
+  if ! echo > /dev/tcp/127.0.0.1/$SOCKS_PORT 2>/dev/null; then
+    echo "ERROR: SOCKS port $SOCKS_PORT not accepting connections after 3s" >&2
+    kill "$DANTED_PID" 2>/dev/null || true
+    rm -f "$DANTED_CONF" "$PROXYCHAINS_CONF"
     exit 1
   fi
-  echo "$PID" > "$PIDFILE"
 
-  # Auto-kill after timeout (background, disowned)
-  (sleep "$TIMEOUT"; kill "$PID" 2>/dev/null; rm -f "$PIDFILE") &
-  disown
+  echo "$DANTED_PID" > "$PIDFILE"
 
-  echo "Firewall bypass proxy started on localhost:$SOCKS_PORT (PID $PID, timeout \${TIMEOUT}s)"
-  echo "Usage: curl --socks5 localhost:$SOCKS_PORT https://example.com"
+  # Cleanup on Ctrl+C, session disconnect, or timeout
+  trap 'echo ""; echo "Proxy stopped (interrupted)"; cleanup; exit 0' INT TERM HUP
+
+  echo "Firewall bypass proxy started on localhost:$SOCKS_PORT (PID $DANTED_PID, timeout \${TIMEOUT}s)"
+  echo ""
+  echo "  proxychains:  proxychains4 -f $PROXYCHAINS_CONF curl https://example.com"
+  echo "  curl direct:  curl --proxy socks5h://localhost:$SOCKS_PORT https://example.com"
+  echo "  wget:         wget -e use_proxy=yes -e http_proxy=socks5h://localhost:$SOCKS_PORT https://example.com"
+  echo ""
+  echo "Connection log below (Ctrl+C to stop):"
+  echo "─────────────────────────────────────────"
+
+  # Block until timeout — Ctrl+C triggers trap, danted logs to stderr in real-time
+  sleep "$TIMEOUT"
+
+  echo ""
+  echo "Timeout reached (\${TIMEOUT}s) — stopping proxy"
+  cleanup
 }
 
 case "\${1:-}" in

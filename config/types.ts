@@ -2,7 +2,7 @@
 
 export interface PathRule {
   path: string; // trailing "*" → Envoy prefix match; otherwise exact match. e.g. "/messages/*", "/health"
-  action: "deny"; // deny matching paths; omit paths to allow them
+  action: "deny"; // deny matching paths; omit paths to allow them // TODO: this needs to support allow and deny
 }
 
 export interface EgressRule {

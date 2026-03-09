@@ -284,26 +284,36 @@ Domain filtering uses TLS SNI inspection (Envoy) for TLS traffic and DNS allowli
 
 ## Firewall Bypass (SOCKS Proxy)
 
-A root-only script (`/usr/local/bin/firewall-bypass`, chmod 700) provides temporary unrestricted egress without modifying iptables or adding capabilities. It starts an SSH SOCKS proxy on `localhost:9100` via `ssh -D` to the local sshd — since the SSH process runs as root (uid 0), its outbound traffic bypasses the iptables RETURN rule for root.
+A root-only script (`/usr/local/bin/firewall-bypass`, chmod 700) provides temporary egress bypass without modifying iptables or adding capabilities. It starts a Dante SOCKS5 proxy on `localhost:9100` — since `danted` runs as root (uid 0), its outbound traffic bypasses the iptables RETURN rule for root. The proxy supports TCP (SOCKS5 CONNECT) and UDP (SOCKS5 UDP ASSOCIATE), though no user-space UDP client is currently installed.
 
 **Usage (as root via SSH):**
 
+The script runs in the **foreground** and logs connections in real-time. Ctrl+C or session disconnect kills the proxy immediately.
+
 ```bash
-firewall-bypass           # Start proxy, auto-close after 10s
+firewall-bypass           # Start proxy, auto-close after 30s
 firewall-bypass 120       # 120s timeout
-firewall-bypass stop      # Kill proxy immediately
+firewall-bypass stop      # Kill proxy (from another session)
 firewall-bypass list      # Show if proxy is active
 ```
 
-**Agent usage:** `curl --socks5 localhost:9100 https://example.com`
+**Agent usage:** `proxychains4` is pre-installed for transparent TCP proxying. Any SOCKS5-capable tool works.
+
+```bash
+proxychains4 -f /run/firewall-bypass-proxychains.conf curl https://example.com
+curl --proxy socks5h://localhost:9100 https://example.com
+```
 
 **Security properties:**
 
-- Root-only (chmod 700) — the `node` user cannot execute it
+- Root-only (chmod 700) — the `node` user cannot execute the script
+- Once running, the SOCKS proxy on `localhost:9100` is accessible to all users in the shared network namespace (sidecar, envoy, gateway). The timeout is the primary security boundary.
 - No `CAP_NET_ADMIN`, no iptables changes
-- Auto-kills after configurable timeout (default 10s)
+- Foreground mode — Ctrl+C / session disconnect kills the proxy immediately
+- Auto-kills after configurable timeout (default 30s)
 - PID tracked in `/run/firewall-bypass.pid`
 - Idempotent: re-running while active shows status and exits
+- Connection logging to stderr in real-time (operator visibility)
 
 ## Agent Environment Prompt
 

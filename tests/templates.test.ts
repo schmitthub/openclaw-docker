@@ -673,16 +673,27 @@ describe("renderFirewallBypass", () => {
     expect(script).toContain(`\${1:-${DEFAULT_BYPASS_TIMEOUT_SECS}}`);
   });
 
-  it("starts ssh -D SOCKS proxy on loopback", () => {
-    expect(script).toContain(`ssh -D "127.0.0.1:$SOCKS_PORT" -f -N`);
+  it("starts danted SOCKS5 proxy", () => {
+    expect(script).toContain('danted -f "$DANTED_CONF"');
   });
 
-  it("connects to local sshd on correct port", () => {
-    expect(script).toContain(`root@127.0.0.1 -p ${SSHD_PORT}`);
+  it("writes danted config with loopback binding", () => {
+    expect(script).toContain("internal: 127.0.0.1 port = $SOCKS_PORT");
+    expect(script).toContain("socksmethod: none");
+  });
+
+  it("enables UDP ASSOCIATE in danted config", () => {
+    expect(script).toContain("command: connect udpassociate");
+    expect(script).toContain("protocol: tcp udp");
+  });
+
+  it("writes proxychains config for node user", () => {
+    expect(script).toContain("PROXYCHAINS_CONF=");
+    expect(script).toContain("socks5 127.0.0.1 $SOCKS_PORT");
   });
 
   it("saves PID to pidfile", () => {
-    expect(script).toContain('echo "$PID" > "$PIDFILE"');
+    expect(script).toContain('echo "$DANTED_PID" > "$PIDFILE"');
   });
 
   it("has stop subcommand", () => {
@@ -695,18 +706,37 @@ describe("renderFirewallBypass", () => {
     expect(script).toContain("list_proxy");
   });
 
-  it("disables SSH host key checking for loopback", () => {
-    expect(script).toContain("StrictHostKeyChecking=no");
-    expect(script).toContain("UserKnownHostsFile=/dev/null");
+  it("validates timeout input", () => {
+    expect(script).toContain("timeout must be a positive integer");
   });
 
-  it("provides actionable error if ssh fails", () => {
-    expect(script).toContain(`is sshd running on port ${SSHD_PORT}?`);
+  it("pre-checks port availability", () => {
+    expect(script).toContain("port $SOCKS_PORT is already in use");
   });
 
-  it("auto-kills after timeout", () => {
-    expect(script).toContain('sleep "$TIMEOUT"; kill "$PID"');
-    expect(script).toContain("disown");
+  it("runs in foreground with trap for cleanup", () => {
+    expect(script).toContain("trap");
+    expect(script).toContain("INT TERM HUP");
+    expect(script).toContain('sleep "$TIMEOUT"');
+    expect(script).not.toContain("disown");
+  });
+
+  it("verifies kill succeeded with SIGKILL fallback", () => {
+    expect(script).toContain("kill -9");
+  });
+
+  it("validates pidfile content before using", () => {
+    expect(script).toContain("corrupt pidfile");
+  });
+
+  it("shows proxychains and curl usage examples", () => {
+    expect(script).toContain("proxychains4 -f");
+    expect(script).toContain("socks5h://localhost:$SOCKS_PORT");
+  });
+
+  it("logs connections in real-time via stderr", () => {
+    expect(script).toContain("logoutput: stderr");
+    expect(script).toContain("Connection log below");
   });
 
   it("is idempotent — same output each time", () => {
