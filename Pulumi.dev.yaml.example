@@ -107,6 +107,6 @@ config:
         - config set channels.telegram.allowFrom "[\"$TELEGRAM_USER_ID\"]"
         - config set channels.telegram.dmPolicy allowlist
         - config set approvals.exec.enabled true
-        - config set approvals.exec.mode targets
-        - config set approvals.exec.targets "[{\"channel\":\"telegram\",\"to\":\"$TELEGRAM_USER_ID\"}]"
+        - config set tools.message.crossContext.allowAcrossProviders true
+        - config set approvals.exec.mode session
         - config set agents.defaults.model.primary "openrouter/moonshotai/kimi-k2.5"
