@@ -68,6 +68,7 @@ export const TAILSCALE_IMAGE =
   "tailscale/tailscale:v1.94.2@sha256:95e528798bebe75f39b10e74e7051cf51188ee615934f232ba7ad06a3390ffa1";
 export const TAILSCALE_STATE_DIR = "/var/lib/tailscale";
 export const TAILSCALE_HEALTH_PORT = 9002;
+export const TAILSCALE_WIREGUARD_PORT = 41641;
 
 // Host paths (per-profile directories on the remote VPS)
 export const buildDir = (profile: string) =>

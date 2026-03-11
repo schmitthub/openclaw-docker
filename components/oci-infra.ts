@@ -1,5 +1,9 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as oci from "@pulumi/oci";
+import { TAILSCALE_WIREGUARD_PORT } from "../config/defaults";
+
+/** Max gateways per host for WireGuard port range sizing (41641–41648) */
+const MAX_GATEWAYS_PER_HOST = 8;
 
 export interface OciInfraArgs {
   compartmentId: pulumi.Input<string>;
@@ -10,7 +14,7 @@ export interface OciInfraArgs {
  * VCN, Internet Gateway, Route Table, Security List, and public Subnet.
  *
  * Security list allows:
- *   - Ingress: TCP 22 (SSH for bootstrap), UDP 41641 (Tailscale)
+ *   - Ingress: TCP 22 (SSH for bootstrap), UDP 41641–41648 (Tailscale WireGuard, one per gateway)
  *   - Egress: all traffic
  */
 export class OciInfra extends pulumi.ComponentResource {
@@ -80,11 +84,14 @@ export class OciInfra extends pulumi.ComponentResource {
             source: "0.0.0.0/0",
             tcpOptions: { min: 22, max: 22 },
           },
-          // Tailscale direct connection discovery (WireGuard)
+          // Tailscale WireGuard — one port per gateway (base + index)
           {
             protocol: "17", // UDP
             source: "0.0.0.0/0",
-            udpOptions: { min: 41641, max: 41641 },
+            udpOptions: {
+              min: TAILSCALE_WIREGUARD_PORT,
+              max: TAILSCALE_WIREGUARD_PORT + MAX_GATEWAYS_PER_HOST - 1,
+            },
           },
         ],
       },

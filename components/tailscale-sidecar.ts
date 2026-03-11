@@ -32,6 +32,8 @@ export interface TailscaleSidecarArgs {
   tailscaleAuthKey: pulumi.Input<string>;
   /** Per-rule port mappings for SSH/TCP egress (from EnvoyEgress) */
   tcpPortMappings?: TcpPortMapping[];
+  /** WireGuard UDP port — must be unique per gateway on the same host */
+  wireguardPort: number;
 }
 
 export class TailscaleSidecar extends pulumi.ComponentResource {
@@ -122,6 +124,8 @@ export class TailscaleSidecar extends pulumi.ComponentResource {
       `TS_USERSPACE=false`,
       `TS_SERVE_CONFIG=/config/serve-config.json`,
       `TS_ENABLE_HEALTH_CHECK=true`,
+      // Pin WireGuard listen port (default is random) so it matches the published Docker port
+      `TS_TAILSCALED_EXTRA_ARGS=--port=${args.wireguardPort}`,
       `ENVOY_UID=${ENVOY_UID}`,
     ];
     sidecarEnvs.push(pulumi.interpolate`TS_AUTHKEY=${args.tailscaleAuthKey}`);
@@ -151,6 +155,16 @@ export class TailscaleSidecar extends pulumi.ComponentResource {
           {
             hostPath: "/dev/net/tun",
             containerPath: "/dev/net/tun",
+          },
+        ],
+        // Publish WireGuard UDP port so peers can establish direct connections
+        // instead of falling back to DERP relay. Without this, inbound WireGuard
+        // UDP from peers cannot reach the container through Docker bridge NAT.
+        ports: [
+          {
+            internal: args.wireguardPort,
+            external: args.wireguardPort,
+            protocol: "udp",
           },
         ],
         dns: [CLOUDFLARE_DNS_PRIMARY, CLOUDFLARE_DNS_SECONDARY],

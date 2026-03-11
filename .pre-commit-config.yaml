@@ -1,4 +1,14 @@
 repos:
+  # Pulumi preview check
+  - repo: local
+    hooks:
+      - id: pulumi-preview
+        name: Run pulumi preview
+        entry: bash -c 'pulumi preview --non-interactive'
+        language: system
+        files: ^(.*\.py|.*\.ts|.*\.go|.*\.yaml|Pulumi\.yaml|Pulumi\..*[^y]aml)$
+        pass_filenames: false
+
   # Pre-commit hooks — basic hygiene (trailing whitespace, EOL, YAML syntax, merge conflicts, private keys)
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0 # Use the ref you want to point at
