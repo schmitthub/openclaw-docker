@@ -19,7 +19,7 @@ import {
   type HetznerConfig,
   type VpsProvider,
 } from "./config/types";
-import { PROVIDERS } from "./config/defaults";
+import { PROVIDERS, TAILSCALE_WIREGUARD_PORT } from "./config/defaults";
 import { renderAgentPrompt } from "./templates";
 
 // --- Pulumi Config ---
@@ -121,7 +121,7 @@ for (const w of envoy.warnings) {
 }
 
 // 4. Deploy gateway instances
-const gatewayInstances = gateways.map((gw) => {
+const gatewayInstances = gateways.map((gw, gwIndex) => {
   // Auto-generate gateway token if not manually set. Stored in Pulumi state
   // (encrypted), stable across deploys. Manual override via config is optional.
   const manualToken = cfg.getSecret(`gatewayToken-${gw.profile}`);
@@ -151,6 +151,8 @@ const gatewayInstances = gateways.map((gw) => {
   );
 
   // Tailscale sidecar (bridge network + auth + hostname)
+  // WireGuard port: base + index ensures unique host ports for multi-gateway deployments
+  const wireguardPort = TAILSCALE_WIREGUARD_PORT + gwIndex;
   const sidecar = new TailscaleSidecar(
     `gateway-ts-${gw.profile}`,
     {
@@ -160,6 +162,7 @@ const gatewayInstances = gateways.map((gw) => {
       port: gw.port,
       tailscaleAuthKey,
       tcpPortMappings: envoy.tcpPortMappings,
+      wireguardPort,
     },
     { dependsOn: [bootstrap] },
   );

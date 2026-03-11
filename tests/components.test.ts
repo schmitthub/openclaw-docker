@@ -588,6 +588,7 @@ describe("TailscaleSidecar component", () => {
       profile: "dev",
       port: 18789,
       tailscaleAuthKey: "tskey-auth-test",
+      wireguardPort: 41641,
     });
 
     expect(sidecar.containerName).toBe("tailscale-dev");
@@ -608,6 +609,7 @@ describe("TailscaleSidecar component", () => {
       profile: "tcptest",
       port: 18789,
       tailscaleAuthKey: "tskey-auth-test",
+      wireguardPort: 41641,
       tcpPortMappings: [
         { dst: "github.com", dstPort: 22, proto: "ssh", envoyPort: 10001 },
       ],
