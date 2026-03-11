@@ -1,0 +1,424 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ocm — OpenClaw fleet management CLI
+# Ergonomic wrappers for day-to-day VPS/container operations.
+#
+# Usage: ocm <subcommand> [options]
+# Install: ln -sf "$(pwd)/scripts/manage.sh" /usr/local/bin/ocm
+
+# ---------------------------------------------------------------------------
+# Project dir resolution (follows symlinks so `ocm` works from anywhere)
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || realpath "${BASH_SOURCE[0]}")")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+CONF_FILE="$SCRIPT_DIR/.ocm.conf"
+
+# ---------------------------------------------------------------------------
+# Color helpers (auto-disable when not a TTY)
+# ---------------------------------------------------------------------------
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
+  CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+else
+  RED=''; GREEN=''; YELLOW=''; CYAN=''; BOLD=''; RESET=''
+fi
+
+_info()  { printf "${CYAN}%s${RESET}\n" "$*"; }
+_ok()    { printf "${GREEN}%s${RESET}\n" "$*"; }
+_warn()  { printf "${YELLOW}WARNING: %s${RESET}\n" "$*" >&2; }
+_error() { printf "${RED}ERROR: %s${RESET}\n" "$*" >&2; }
+_die()   { _error "$@"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Prerequisite checks
+# ---------------------------------------------------------------------------
+command -v jq >/dev/null 2>&1 || _die "jq is required but not installed"
+command -v pulumi >/dev/null 2>&1 || _die "pulumi is required but not installed"
+command -v ssh >/dev/null 2>&1 || _die "ssh is required but not installed"
+
+# ---------------------------------------------------------------------------
+# Global state (populated by _resolve_stack / _resolve_profile)
+# ---------------------------------------------------------------------------
+OCM_STACK=""
+OCM_PROFILE=""
+_CACHED_IP=""
+_CACHED_PROFILES=""
+
+# ---------------------------------------------------------------------------
+# Load config file
+# ---------------------------------------------------------------------------
+_load_conf() {
+  if [[ -f "$CONF_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$CONF_FILE"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Stack / profile resolution
+# ---------------------------------------------------------------------------
+_resolve_stack() {
+  if [[ -n "$OCM_STACK" ]]; then return; fi
+  OCM_STACK="${OCM_STACK_ENV:-${OCM_DEFAULT_STACK:-}}"
+  if [[ -z "$OCM_STACK" ]]; then
+    _die "No stack configured. Run 'ocm init' or pass --stack <stack>"
+  fi
+}
+
+_resolve_profile() {
+  if [[ -n "$OCM_PROFILE" ]]; then return; fi
+  OCM_PROFILE="${OCM_PROFILE_ENV:-${OCM_DEFAULT_PROFILE:-}}"
+  if [[ -z "$OCM_PROFILE" ]]; then
+    _die "No profile configured. Run 'ocm init' or pass --profile <profile>"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Primitives
+# ---------------------------------------------------------------------------
+_pulumi() {
+  pulumi --cwd "$PROJECT_DIR" --stack "$OCM_STACK" "$@"
+}
+
+_get_ip() {
+  if [[ -z "$_CACHED_IP" ]]; then
+    _CACHED_IP="$(_pulumi stack output serverIp 2>/dev/null)" \
+      || _die "Failed to get server IP from stack '$OCM_STACK'. Is the stack deployed?"
+  fi
+  printf '%s' "$_CACHED_IP"
+}
+
+_get_profiles() {
+  if [[ -z "$_CACHED_PROFILES" ]]; then
+    _CACHED_PROFILES="$(_pulumi config get openclaw-deploy:gateways --json 2>/dev/null | jq -r '.[].profile')" \
+      || _die "Failed to read gateway profiles from stack '$OCM_STACK'"
+  fi
+  printf '%s' "$_CACHED_PROFILES"
+}
+
+_ssh() {
+  local ip
+  ip="$(_get_ip)"
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+    "root@${ip}" "$@"
+}
+
+_docker() {
+  _ssh docker "$@"
+}
+
+_container_name() {
+  local service="${1:-gateway}"
+  _resolve_profile
+  case "$service" in
+    gateway|gw)   printf 'openclaw-gateway-%s' "$OCM_PROFILE" ;;
+    envoy)        printf 'envoy-%s' "$OCM_PROFILE" ;;
+    sidecar|ts)   printf 'tailscale-%s' "$OCM_PROFILE" ;;
+    *) _die "Unknown service '$service'. Use: gateway, envoy, sidecar" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_init() {
+  _info "Configuring ocm defaults..."
+  echo
+
+  # List available stacks
+  local stacks
+  stacks="$(pulumi --cwd "$PROJECT_DIR" stack ls --json 2>/dev/null | jq -r '.[].name' 2>/dev/null || true)"
+  if [[ -n "$stacks" ]]; then
+    printf '%b%s%b\n' "$BOLD" "Available stacks:" "$RESET"
+    echo "$stacks" | while IFS= read -r s; do printf "  %s\n" "$s"; done
+    echo
+  fi
+
+  local default_stack="${OCM_DEFAULT_STACK:-}"
+  read -rp "Default stack${default_stack:+ [$default_stack]}: " input_stack
+  local stack="${input_stack:-$default_stack}"
+  [[ -n "$stack" ]] || _die "Stack is required"
+
+  # List available profiles for the chosen stack
+  local profiles
+  profiles="$(pulumi --cwd "$PROJECT_DIR" --stack "$stack" config get openclaw-deploy:gateways --json 2>/dev/null | jq -r '.[].profile' 2>/dev/null || true)"
+  if [[ -n "$profiles" ]]; then
+    printf '\n%b%s%b\n' "$BOLD" "Available profiles for stack '$stack':" "$RESET"
+    echo "$profiles" | while IFS= read -r p; do printf "  %s\n" "$p"; done
+    echo
+  fi
+
+  local default_profile="${OCM_DEFAULT_PROFILE:-}"
+  read -rp "Default profile${default_profile:+ [$default_profile]}: " input_profile
+  local profile="${input_profile:-$default_profile}"
+  [[ -n "$profile" ]] || _die "Profile is required"
+
+  cat > "$CONF_FILE" <<EOF
+# ocm defaults (git-ignored)
+OCM_DEFAULT_STACK=$stack
+OCM_DEFAULT_PROFILE=$profile
+EOF
+
+  _ok "Saved defaults to $CONF_FILE"
+  printf "  Stack:   %s\n" "$stack"
+  printf "  Profile: %s\n" "$profile"
+}
+
+cmd_status() {
+  _resolve_stack
+  _resolve_profile
+  local gw envoy sc
+  gw="$(_container_name gateway)"
+  envoy="$(_container_name envoy)"
+  sc="$(_container_name sidecar)"
+
+  printf "${BOLD}Stack:${RESET}   %s\n" "$OCM_STACK"
+  printf "${BOLD}Profile:${RESET} %s\n" "$OCM_PROFILE"
+  printf "${BOLD}VPS IP:${RESET}  %s\n\n" "$(_get_ip)"
+
+  _docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' \
+    --filter "name=$gw" --filter "name=$envoy" --filter "name=$sc"
+}
+
+cmd_logs() {
+  _resolve_stack
+  _resolve_profile
+  local service="gateway"
+  local follow=""
+  local tail_lines=""
+  local extra_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--follow) follow="-f"; shift ;;
+      -n|--tail)   tail_lines="$2"; shift 2 ;;
+      gateway|gw|envoy|sidecar|ts) service="$1"; shift ;;
+      *) extra_args+=("$1"); shift ;;
+    esac
+  done
+
+  local cname
+  cname="$(_container_name "$service")"
+  local args=("logs")
+  [[ -n "$follow" ]] && args+=("-f")
+  [[ -n "$tail_lines" ]] && args+=("--tail" "$tail_lines")
+  args+=("${extra_args[@]+"${extra_args[@]}"}")
+  args+=("$cname")
+
+  _docker "${args[@]}"
+}
+
+cmd_restart() {
+  _resolve_stack
+  _resolve_profile
+  local service="${1:-all}"
+
+  if [[ "$service" == "all" ]]; then
+    _info "Restarting all containers for profile '$OCM_PROFILE'..."
+    _docker restart "$(_container_name gateway)" "$(_container_name envoy)" "$(_container_name sidecar)"
+  else
+    local cname
+    cname="$(_container_name "$service")"
+    _info "Restarting $cname..."
+    _docker restart "$cname"
+  fi
+  _ok "Done."
+}
+
+cmd_exec() {
+  _resolve_stack
+  _resolve_profile
+  local user="node"
+  local cmd=("bash")
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -u|--user) user="$2"; shift 2 ;;
+      --) shift; cmd=("$@"); break ;;
+      *)  cmd=("$@"); break ;;
+    esac
+  done
+
+  local cname
+  cname="$(_container_name gateway)"
+  _ssh -t docker exec -it -u "$user" "$cname" "${cmd[@]}"
+}
+
+cmd_run() {
+  _resolve_stack
+  _resolve_profile
+  local user="node"
+  local cmd=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -u|--user) user="$2"; shift 2 ;;
+      --) shift; cmd=("$@"); break ;;
+      *)  cmd=("$@"); break ;;
+    esac
+  done
+
+  [[ ${#cmd[@]} -gt 0 ]] || _die "Usage: ocm run [--user root] <cmd...>"
+
+  # Discover image from running container
+  local cname
+  cname="$(_container_name gateway)"
+  local image
+  image="$(_docker inspect --format '{{.Config.Image}}' "$cname" 2>/dev/null)" \
+    || _die "Failed to inspect container '$cname'. Is it running?"
+
+  _ssh docker run --rm -it --user "$user" "$image" "${cmd[@]}"
+}
+
+cmd_shell() {
+  _resolve_stack
+  local target="${1:-node}"
+
+  case "$target" in
+    node)
+      _resolve_profile
+      local cname
+      cname="$(_container_name gateway)"
+      _ssh -t docker exec -it -u node "$cname" bash
+      ;;
+    root)
+      _resolve_profile
+      local cname
+      cname="$(_container_name gateway)"
+      _ssh -t docker exec -it -u root "$cname" bash
+      ;;
+    vps|host)
+      _info "SSH into VPS as root..."
+      _ssh
+      ;;
+    *)
+      _die "Unknown shell target '$target'. Use: node (default), root, vps"
+      ;;
+  esac
+}
+
+cmd_openclaw() {
+  _resolve_stack
+  _resolve_profile
+  [[ $# -gt 0 ]] || _die "Usage: ocm openclaw <cmd...>"
+
+  local cname
+  cname="$(_container_name gateway)"
+  _ssh -t docker exec -it -u node "$cname" openclaw "$@"
+}
+
+cmd_ts_status() {
+  _resolve_stack
+  _resolve_profile
+  local cname
+  cname="$(_container_name sidecar)"
+  _docker exec "$cname" tailscale status "$@"
+}
+
+cmd_bypass() {
+  _resolve_stack
+  _resolve_profile
+  local duration="${1:-30}"
+  local cname
+  cname="$(_container_name gateway)"
+  _ssh -t docker exec -it -u root "$cname" firewall-bypass "$duration"
+}
+
+cmd_ps() {
+  _resolve_stack
+  _docker ps "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+cmd_help() {
+  cat <<EOF
+${BOLD}ocm${RESET} — OpenClaw fleet management CLI
+
+${BOLD}USAGE${RESET}
+  ocm [--stack <stack>] [--profile <profile>] <command> [args...]
+
+${BOLD}GLOBAL FLAGS${RESET}
+  --stack <stack>       Override Pulumi stack (env: OCM_STACK)
+  --profile <profile>   Override gateway profile (env: OCM_PROFILE)
+
+${BOLD}COMMANDS${RESET}
+  init                  Interactive setup of defaults (~/.ocm.conf)
+  status                Show container status for the current profile
+  logs [svc] [-f]       Container logs (svc: gateway, envoy, sidecar)
+  restart [svc]         Restart container(s) (svc: gateway, envoy, sidecar, all)
+  exec [opts] [cmd]     Exec into gateway (default: bash, -u root for root)
+  run [opts] <cmd>      Ephemeral docker run --rm with gateway image
+  shell [target]        Shell access (target: node, root, vps)
+  openclaw <cmd>        Run openclaw CLI as node user
+  ts-status             Tailscale status from sidecar
+  bypass [duration]     Firewall bypass SOCKS proxy (default: 30s)
+  ps [args]             Docker ps on VPS
+  help                  Show this help
+
+${BOLD}SERVICES${RESET}
+  gateway (gw)          OpenClaw gateway container
+  envoy                 Envoy egress proxy container
+  sidecar (ts)          Tailscale sidecar container
+
+${BOLD}EXAMPLES${RESET}
+  ocm status
+  ocm logs -f
+  ocm logs envoy -n 100
+  ocm restart gateway
+  ocm shell
+  ocm shell vps
+  ocm openclaw config get gateway.port
+  ocm --stack oracle --profile dev logs -f
+  ocm bypass 120
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Global flag parsing + dispatch
+# ---------------------------------------------------------------------------
+_load_conf
+
+# Capture env var overrides before flag parsing
+OCM_STACK_ENV="${OCM_STACK:-}"
+OCM_PROFILE_ENV="${OCM_PROFILE:-}"
+
+# Reset for flag parsing
+OCM_STACK=""
+OCM_PROFILE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --stack)   OCM_STACK="$2"; shift 2 ;;
+    --profile) OCM_PROFILE="$2"; shift 2 ;;
+    -*)
+      # Unknown global flag — might be for a subcommand, stop parsing
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+SUBCOMMAND="${1:-help}"
+shift || true
+
+case "$SUBCOMMAND" in
+  init)       cmd_init "$@" ;;
+  status|st)  cmd_status "$@" ;;
+  logs|log)   cmd_logs "$@" ;;
+  restart)    cmd_restart "$@" ;;
+  exec)       cmd_exec "$@" ;;
+  run)        cmd_run "$@" ;;
+  shell|sh)   cmd_shell "$@" ;;
+  openclaw)   cmd_openclaw "$@" ;;
+  ts-status)  cmd_ts_status "$@" ;;
+  bypass)     cmd_bypass "$@" ;;
+  ps)         cmd_ps "$@" ;;
+  help|-h|--help) cmd_help ;;
+  *) _die "Unknown command '$SUBCOMMAND'. Run 'ocm help' for usage." ;;
+esac
