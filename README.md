@@ -15,6 +15,7 @@ What this gets you above the official sandboxed docker compose offering:
 - DNS exfiltration prevention via CoreDNS allowlist proxy — only whitelisted domains resolve, everything else returns NXDOMAIN (forwarded through Cloudflare malware-blocking DNS)
 - Firewall escape hatch — grant the agent temporary full internet access for any one-off destination using a convenient ssh one-liner from your machine (auto-closes after 30s by default; the agent already knows to ask for this when it hits blocked destinations)
 - Auto-injected agent environment prompt — the agent understands its constraints out of the box so it knows when to ask, what to ask, and what options it has at its disposal when it comes to tool use, gateway management, and outbound requests
+- Management CLI (`ocm`) for common operational tasks like restarting containers, viewing container or VPS logs and system health, or opening shells
 
 > Early development — features and conventions may change. Contributions and feedback welcome!
 
@@ -48,6 +49,7 @@ What this gets you above the official sandboxed docker compose offering:
   - [DNS Exfiltration Prevention](#dns-exfiltration-prevention)
   - [Agent Environment Prompt](#agent-environment-prompt)
   - [Docker Hub Build Mode](#docker-hub-build-mode)
+    - [Multi-platform builds](#multi-platform-builds)
   - [Experimental Runtime Binary Persistence](#experimental-runtime-binary-persistence)
   - [Management CLI (`ocm`)](#management-cli-ocm)
 
