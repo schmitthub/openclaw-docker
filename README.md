@@ -652,7 +652,7 @@ A single bash script (`scripts/manage.sh`) providing ergonomic wrappers for day-
 **Install globally:**
 
 ```bash
-make install    # symlinks scripts/manage.sh → /usr/local/bin/ocm
+make install    # symlinks scripts/manage.sh → /usr/local/bin/ocm (prompts for sudo)
 make uninstall  # removes the symlink
 ```
 

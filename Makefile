@@ -57,10 +57,10 @@ bypass:
 
 ## install: Symlink ocm to /usr/local/bin
 install:
-	@ln -sf "$(abspath $(OCM))" /usr/local/bin/ocm
+	@sudo ln -sf "$(abspath $(OCM))" /usr/local/bin/ocm
 	@echo "Installed: /usr/local/bin/ocm → $(abspath $(OCM))"
 
 ## uninstall: Remove ocm symlink
 uninstall:
-	@rm -f /usr/local/bin/ocm
+	@sudo rm -f /usr/local/bin/ocm
 	@echo "Removed /usr/local/bin/ocm"
