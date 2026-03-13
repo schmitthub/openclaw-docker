@@ -255,6 +255,21 @@ export class GatewayImage extends pulumi.ComponentResource {
       { parent: this, dependsOn: [image], ignoreChanges: ["create"] },
     );
 
+    // Stop buildkit containers left behind by @pulumi/docker-build
+    // (pulumi/pulumi-docker-build#65). Build cache is stored in named Docker volumes
+    // and survives container stop — the provider restarts them on the next build.
+    new command.local.Command(
+      `${name}-buildkit-cleanup`,
+      {
+        create:
+          'docker ps -q --filter "name=^buildx_buildkit_" | xargs -r docker stop' +
+          ' || echo "WARNING: failed to stop buildkit containers — run manually:' +
+          " docker ps -q --filter 'name=^buildx_buildkit_' | xargs docker stop\" >&2",
+        triggers: [imageDigestTrigger],
+      },
+      { parent: this, dependsOn: [image] },
+    );
+
     // Pull on VPS via docker.RemoteImage with provider-level registryAuth.
     // Address must be "docker.io" for Docker Hub (provider normalizes internally).
     const remoteDockerProvider = new docker.Provider(
@@ -363,6 +378,21 @@ export class GatewayImage extends pulumi.ComponentResource {
         buildOnPreview: false,
       },
       { parent: this, provider: buildProvider },
+    );
+
+    // Stop buildkit containers left behind by @pulumi/docker-build
+    // (pulumi/pulumi-docker-build#65). Build cache is stored in named Docker volumes
+    // and survives container stop — the provider restarts them on the next build.
+    new command.local.Command(
+      `${name}-buildkit-cleanup`,
+      {
+        create:
+          'docker ps -q --filter "name=^buildx_buildkit_" | xargs -r docker stop' +
+          ' || echo "WARNING: failed to stop buildkit containers — run manually:' +
+          " docker ps -q --filter 'name=^buildx_buildkit_' | xargs docker stop\" >&2",
+        triggers: [image.digest],
+      },
+      { parent: this, dependsOn: [image] },
     );
 
     return {
