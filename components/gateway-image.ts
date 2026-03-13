@@ -246,7 +246,7 @@ export class GatewayImage extends pulumi.ComponentResource {
     // Git SHA is resolved at runtime (not plan time) so the create string stays stable
     // across commits. ignoreChanges on "create" prevents one-time migration diff from
     // the old plan-time SHA — only `triggers` (image digest) controls re-execution.
-    new command.local.Command(
+    const commitTag = new command.local.Command(
       `${name}-commit-tag`,
       {
         create: `docker buildx imagetools create -t ${repo}:${args.profile}-$(git rev-parse --short=7 HEAD) ${remoteTag}`,
@@ -258,16 +258,16 @@ export class GatewayImage extends pulumi.ComponentResource {
     // Stop buildkit containers left behind by @pulumi/docker-build
     // (pulumi/pulumi-docker-build#65). Build cache is stored in named Docker volumes
     // and survives container stop — the provider restarts them on the next build.
+    // Depends on commitTag (last local buildx operation) to avoid race conditions.
     new command.local.Command(
       `${name}-buildkit-cleanup`,
       {
         create:
           'docker ps -q --filter "name=^buildx_buildkit_" | xargs -r docker stop' +
-          ' || echo "WARNING: failed to stop buildkit containers — run manually:' +
-          " docker ps -q --filter 'name=^buildx_buildkit_' | xargs docker stop\" >&2",
+          ' || echo "WARNING: buildkit cleanup failed — see pulumi/pulumi-docker-build#65" >&2',
         triggers: [imageDigestTrigger],
       },
-      { parent: this, dependsOn: [image] },
+      { parent: this, dependsOn: [commitTag] },
     );
 
     // Pull on VPS via docker.RemoteImage with provider-level registryAuth.
@@ -380,16 +380,16 @@ export class GatewayImage extends pulumi.ComponentResource {
       { parent: this, provider: buildProvider },
     );
 
-    // Stop buildkit containers left behind by @pulumi/docker-build
+    // Stop buildkit containers left behind by @pulumi/docker-build on the VPS
     // (pulumi/pulumi-docker-build#65). Build cache is stored in named Docker volumes
     // and survives container stop — the provider restarts them on the next build.
-    new command.local.Command(
+    new command.remote.Command(
       `${name}-buildkit-cleanup`,
       {
+        connection: args.connection,
         create:
           'docker ps -q --filter "name=^buildx_buildkit_" | xargs -r docker stop' +
-          ' || echo "WARNING: failed to stop buildkit containers — run manually:' +
-          " docker ps -q --filter 'name=^buildx_buildkit_' | xargs docker stop\" >&2",
+          ' || echo "WARNING: buildkit cleanup failed — see pulumi/pulumi-docker-build#65" >&2',
         triggers: [image.digest],
       },
       { parent: this, dependsOn: [image] },
