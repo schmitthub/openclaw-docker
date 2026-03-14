@@ -10,6 +10,7 @@ import {
   NODE_COMPILE_CACHE_DIR,
   SSHD_PORT,
   COREDNS_VERSION,
+  FILEBROWSER_VERSION,
 } from "../config/defaults";
 import type { ImageStep } from "../config/types";
 
@@ -49,8 +50,10 @@ RUN curl -fsSL "https://github.com/coredns/coredns/releases/download/v${COREDNS_
 RUN curl -fsSL https://bun.sh/install | bash && \\
     cp /root/.bun/bin/bun /usr/local/bin/bun
 
-# filebrowser
-RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+# filebrowser (pinned version)
+RUN curl -fsSL "https://github.com/filebrowser/filebrowser/releases/download/v${FILEBROWSER_VERSION}/linux-\${TARGETARCH}-filebrowser.tar.gz" | \\
+    tar -xz -C /usr/local/bin/ filebrowser && \\
+    chmod 755 /usr/local/bin/filebrowser
 
 # ── Stage: homebrew (heaviest, rarely changes) ────────────────────────────────
 FROM ${DOCKER_BASE_IMAGE} AS homebrew

@@ -5,6 +5,9 @@ set -euo pipefail
 # Fetches current multi-arch manifest digests via `docker buildx imagetools inspect`
 # and replaces the @sha256:... suffix in-place.
 #
+# Images are extracted automatically from defaults.ts — no separate list to maintain.
+# To change a base image tag (e.g. node:22→24), edit defaults.ts and re-run this script.
+#
 # Usage: ./scripts/update-base-digests.sh
 # Requires: docker (with buildx plugin), jq
 
@@ -18,14 +21,21 @@ fi
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required but not installed" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker is required but not installed" >&2; exit 1; }
 
-# image:tag pairs to pin (without digest)
-IMAGES=(
-  "node:22-bookworm"
-  "debian:bookworm-slim"
-  "tailscale/tailscale:v1.94.2"
-  "envoyproxy/envoy:v1.33-latest"
+# Extract image:tag pairs from defaults.ts by finding all "image:tag@sha256:..." patterns.
+# This makes defaults.ts the single source of truth — no separate list to keep in sync.
+mapfile -t IMAGES < <(
+  grep -oE '"[a-zA-Z0-9_./-]+:[a-zA-Z0-9._-]+@sha256:[a-f0-9]+"' "$DEFAULTS_FILE" \
+    | sed 's/"//g' \
+    | sed 's/@sha256:[a-f0-9]*//' \
+    | sort -u
 )
 
+if [ ${#IMAGES[@]} -eq 0 ]; then
+  echo "ERROR: no digest-pinned images found in $DEFAULTS_FILE" >&2
+  exit 1
+fi
+
+echo "Found ${#IMAGES[@]} pinned image(s) in $DEFAULTS_FILE:"
 changed=0
 
 for image in "${IMAGES[@]}"; do
@@ -68,14 +78,6 @@ for image in "${IMAGES[@]}"; do
 
   # Replace existing pinned reference: "image@sha256:old" -> "image@sha256:new"
   sed -i'' -e "s|\"${escaped_image}@sha256:[a-f0-9]*\"|\"${image}@${digest}\"|g" "$DEFAULTS_FILE"
-
-  # Replace unpinned reference: "image" -> "image@sha256:new" (first pin)
-  sed -i'' -e "s|\"${escaped_image}\"|\"${image}@${digest}\"|g" "$DEFAULTS_FILE"
-
-  # Update standalone DOCKER_BASE_IMAGE_DIGEST if this is the base image
-  if [ "$image" = "node:22-bookworm" ]; then
-    sed -i'' -e "/DOCKER_BASE_IMAGE_DIGEST/s|\"sha256:[a-f0-9]*\"|\"${digest}\"|" "$DEFAULTS_FILE"
-  fi
 
   # Verify the digest actually landed in the file
   if ! grep -q "$digest" "$DEFAULTS_FILE"; then
