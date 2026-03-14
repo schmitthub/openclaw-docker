@@ -16,7 +16,7 @@ import {
   SSHD_PORT,
   ENVOY_UID,
   TAILSCALE_HEALTH_PORT,
-} from "../config/defaults";
+} from "../config";
 import { validateHetznerConfig } from "../config/types";
 import type { EgressRule } from "../config/types";
 
