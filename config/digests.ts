@@ -8,4 +8,6 @@ export const IMAGE_DIGESTS: Record<string, string> = {
     "sha256:f91c972d5c99bc133233a079b5663b903e7d56b3b0b0216398924f7b80d09e47",
   "node:22-bookworm":
     "sha256:b501c082306a4f528bc4038cbf2fbb58095d583d0419a259b2114b5ac53d12e9",
+  "tailscale/tailscale:v1.94.2":
+    "sha256:95e528798bebe75f39b10e74e7051cf51188ee615934f232ba7ad06a3390ffa1",
 };

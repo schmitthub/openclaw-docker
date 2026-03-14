@@ -59,9 +59,8 @@ export const TAILSCALE_FUNNEL_PORTS = [443, 8443, 10000];
 // Supported VPS providers
 export const PROVIDERS = ["hetzner", "digitalocean", "oracle"] as const;
 
-// Tailscale sidecar (digest-pinned — update via `make update-digests`)
-export const TAILSCALE_IMAGE =
-  "tailscale/tailscale:v1.94.2@sha256:95e528798bebe75f39b10e74e7051cf51188ee615934f232ba7ad06a3390ffa1";
+// Tailscale sidecar
+export const TAILSCALE_IMAGE_TAG = "tailscale/tailscale:v1.94.2";
 export const TAILSCALE_STATE_DIR = "/var/lib/tailscale";
 export const TAILSCALE_HEALTH_PORT = 9002;
 export const TAILSCALE_WIREGUARD_PORT = 41641;
