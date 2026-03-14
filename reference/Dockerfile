@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 # CoreDNS — DNS allowlist proxy (~15MB static binary)
 ARG TARGETARCH
 RUN ARCH=$(echo ${TARGETARCH} | sed 's/amd64/amd64/;s/arm64/arm64/') && \
-    curl -fsSL "https://github.com/coredns/coredns/releases/download/v1.12.1/coredns_1.12.1_linux_${ARCH}.tgz" | \
+    curl -fsSL "https://github.com/coredns/coredns/releases/download/v1.14.2/coredns_1.14.2_linux_${ARCH}.tgz" | \
     tar -xz -C /usr/local/bin/ && \
     chmod 755 /usr/local/bin/coredns
 
@@ -21,11 +21,13 @@ RUN ARCH=$(echo ${TARGETARCH} | sed 's/amd64/amd64/;s/arm64/arm64/') && \
 RUN curl -fsSL https://bun.sh/install | bash && \
     cp /root/.bun/bin/bun /usr/local/bin/bun
 
-# filebrowser
-RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+# filebrowser (pinned version — update via `make update-digests`)
+RUN curl -fsSL https://github.com/filebrowser/filebrowser/releases/download/v2.61.2/linux-${TARGETARCH}-filebrowser.tar.gz | \
+    tar -xz -C /usr/local/bin/ filebrowser && \
+    chmod 755 /usr/local/bin/filebrowser
 
 # ── Stage: homebrew (heaviest, rarely changes) ────────────────────────────────
-FROM node:22-bookworm AS homebrew
+FROM node:24-bookworm AS homebrew
 
 RUN groupmod -g 1000 node && usermod -u 1000 node
 
@@ -39,7 +41,7 @@ RUN if ! id -u linuxbrew >/dev/null 2>&1; then useradd -m -s /bin/bash linuxbrew
         chmod -R g+rwx "/home/linuxbrew";
 
 # ── Stage: final ──────────────────────────────────────────────────────────────
-FROM node:22-bookworm
+FROM node:24-bookworm
 
 # Pin node user UID/GID to 1000 (matches chown in Pulumi host provisioning).
 RUN groupmod -g 1000 node && usermod -u 1000 node

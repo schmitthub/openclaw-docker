@@ -17,7 +17,8 @@ export const ENVOY_MITM_CLUSTER_NAME = "mitm_forward_cluster";
 
 // CoreDNS (DNS allowlist proxy — runs inside gateway container)
 export const COREDNS_PORT = 5300;
-export const COREDNS_VERSION = "1.12.1";
+export const COREDNS_VERSION = "1.14.2";
+export const FILEBROWSER_VERSION = "2.61.2";
 export const COREDNS_CONFIG_HOST_DIR = "/opt/openclaw-deploy/coredns";
 export const COREDNS_CONTAINER_PATH = "/etc/coredns/Corefile";
 
@@ -28,7 +29,7 @@ export const DEFAULT_OPENCLAW_WORKSPACE_DIR = "/home/node/.openclaw/workspace";
 
 // Base images (digest-pinned — update via `make update-digests`)
 export const DOCKER_BASE_IMAGE =
-  "node:22-bookworm@sha256:b501c082306a4f528bc4038cbf2fbb58095d583d0419a259b2114b5ac53d12e9";
+  "node:24-bookworm@sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b";
 export const DOCKER_DOWNLOADS_IMAGE =
   "debian:bookworm-slim@sha256:74d56e3931e0d5a1dd51f8c8a2466d21de84a271cd3b5a733b803aa91abf4421";
 export const DOCKER_BASE_IMAGE_NAME = nameFromImageRef(DOCKER_BASE_IMAGE);

@@ -183,8 +183,10 @@ describe("defaults", () => {
     expect(CORE_APT_PACKAGES).toContain("libsecret-tools");
   });
 
-  it("uses digest-pinned node:22-bookworm base image", () => {
-    expect(DOCKER_BASE_IMAGE).toMatch(/^node:22-bookworm@sha256:[a-f0-9]{64}$/);
+  it("uses digest-pinned node base image", () => {
+    expect(DOCKER_BASE_IMAGE).toMatch(
+      /^node:\d+-bookworm@sha256:[a-f0-9]{64}$/,
+    );
   });
 
   it("derives DOCKER_BASE_IMAGE_DIGEST from DOCKER_BASE_IMAGE", () => {

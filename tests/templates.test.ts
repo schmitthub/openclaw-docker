@@ -220,9 +220,9 @@ describe("renderDockerfile", () => {
     expect(df).not.toMatch(/install.*ttyd|ttyd.*install|RUN.*ttyd/);
   });
 
-  it("installs filebrowser via official install script", () => {
+  it("installs pinned filebrowser from GitHub releases", () => {
     const df = renderDockerfile(defaultOpts);
-    expect(df).toContain("filebrowser/get/master/get.sh");
+    expect(df).toContain("filebrowser/filebrowser/releases/download/v");
   });
 
   it("is idempotent — same args produce identical output", () => {
