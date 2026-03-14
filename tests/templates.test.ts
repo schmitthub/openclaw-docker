@@ -19,7 +19,7 @@ import {
   DEFAULT_BYPASS_TIMEOUT_SECS,
   COREDNS_PORT,
   COREDNS_CONTAINER_PATH,
-} from "../config/defaults";
+} from "../config";
 
 const defaultOpts: DockerfileOpts = { version: "2026.2" };
 

@@ -1,6 +1,5 @@
-// Envoy (digest-pinned — update via `make update-digests`)
-export const ENVOY_IMAGE =
-  "envoyproxy/envoy:v1.33-latest@sha256:f91c972d5c99bc133233a079b5663b903e7d56b3b0b0216398924f7b80d09e47";
+// Envoy
+export const ENVOY_IMAGE_TAG = "envoyproxy/envoy:v1.33-latest";
 export const ENVOY_EGRESS_PORT = 10000;
 export const ENVOY_TCP_PORT_BASE = 10001;
 export const ENVOY_UID = 101;
@@ -27,13 +26,9 @@ export const DEFAULT_GATEWAY_PORT = 18789;
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/home/node/.openclaw";
 export const DEFAULT_OPENCLAW_WORKSPACE_DIR = "/home/node/.openclaw/workspace";
 
-// Base images (digest-pinned — update via `make update-digests`)
-export const DOCKER_BASE_IMAGE =
-  "node:24-bookworm@sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b";
-export const DOCKER_DOWNLOADS_IMAGE =
-  "debian:bookworm-slim@sha256:74d56e3931e0d5a1dd51f8c8a2466d21de84a271cd3b5a733b803aa91abf4421";
-export const DOCKER_BASE_IMAGE_NAME = nameFromImageRef(DOCKER_BASE_IMAGE);
-export const DOCKER_BASE_IMAGE_DIGEST = digestFromImageRef(DOCKER_BASE_IMAGE);
+// Base image tags (edit these, then run `make update-digests` to pin)
+export const DOCKER_BASE_IMAGE_TAG = "node:22-bookworm";
+export const DOCKER_DOWNLOADS_IMAGE_TAG = "debian:bookworm-slim";
 export const NODE_COMPILE_CACHE_DIR = "/home/node/.node-compile-cache";
 
 // SSH access
@@ -64,9 +59,8 @@ export const TAILSCALE_FUNNEL_PORTS = [443, 8443, 10000];
 // Supported VPS providers
 export const PROVIDERS = ["hetzner", "digitalocean", "oracle"] as const;
 
-// Tailscale sidecar (digest-pinned — update via `make update-digests`)
-export const TAILSCALE_IMAGE =
-  "tailscale/tailscale:v1.94.2@sha256:95e528798bebe75f39b10e74e7051cf51188ee615934f232ba7ad06a3390ffa1";
+// Tailscale sidecar
+export const TAILSCALE_IMAGE_TAG = "tailscale/tailscale:v1.94.2";
 export const TAILSCALE_STATE_DIR = "/var/lib/tailscale";
 export const TAILSCALE_HEALTH_PORT = 9002;
 export const TAILSCALE_WIREGUARD_PORT = 41641;
@@ -91,17 +85,9 @@ export function safeFileDomain(domain: string): string {
   return domain.replace(/\*/g, "_wildcard_");
 }
 
-function nameFromImageRef(imageRef: string): string {
-  const at = imageRef.indexOf("@");
-  return at === -1 ? imageRef : imageRef.slice(0, at);
-}
-
-function digestFromImageRef(imageRef: string): string {
-  const at = imageRef.indexOf("@");
-  if (at === -1) {
-    throw new Error(`Image ref is not digest-pinned: ${imageRef}`);
-  }
-  return imageRef.slice(at + 1);
+/** Pin a tag with its digest: "image:tag" + "sha256:abc" → "image:tag@sha256:abc" */
+export function pinImage(tag: string, digest: string): string {
+  return `${tag}@${digest}`;
 }
 
 // Oracle Cloud (OCI) defaults

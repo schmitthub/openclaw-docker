@@ -11,7 +11,7 @@ import {
   SSHD_PORT,
   COREDNS_VERSION,
   FILEBROWSER_VERSION,
-} from "../config/defaults";
+} from "../config";
 import type { ImageStep } from "../config/types";
 
 export interface DockerfileOpts {
