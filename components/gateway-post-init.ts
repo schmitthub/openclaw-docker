@@ -68,7 +68,7 @@ export class GatewayPostInit extends pulumi.ComponentResource {
       `${name}-health-wait`,
       {
         connection: args.connection,
-        create: pulumi.interpolate`timeout 30 sh -c 'until docker exec ${args.containerName} wget -q --spider http://127.0.0.1:${args.port}/healthz 2>/dev/null; do sleep 2; done'`,
+        create: pulumi.interpolate`timeout 60 sh -c 'until docker exec ${args.containerName} wget -q --spider http://127.0.0.1:${args.port}/healthz 2>/dev/null; do state=$(docker inspect -f "{{.State.Status}}" ${args.containerName} 2>/dev/null); [ "$state" != "running" ] && echo "ERROR: container not running (state: $state)" >&2 && exit 1; sleep 3; done'`,
         triggers: [Date.now().toString()],
       },
       { parent: this },
@@ -91,12 +91,7 @@ export class GatewayPostInit extends pulumi.ComponentResource {
 
       if (validCmds.length === 0) continue;
 
-      const script = validCmds
-        .map(
-          (cmd, i) =>
-            `echo "[post:${groupName} ${i + 1}/${validCmds.length}] ${cmd.replace(/"/g, '\\"')}" && ${cmd}`,
-        )
-        .join("\n");
+      const script = validCmds.join("\n");
       const encoded = Buffer.from(script).toString("base64");
       const groupHash = hashCommands(validCmds);
 
