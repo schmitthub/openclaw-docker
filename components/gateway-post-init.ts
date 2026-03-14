@@ -1,26 +1,23 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as command from "@pulumi/command";
 import * as crypto from "crypto";
-import {
-  DEFAULT_OPENCLAW_CONFIG_DIR,
-  DEFAULT_OPENCLAW_WORKSPACE_DIR,
-  dataDir,
-} from "../config";
 
-export interface GatewayInitArgs {
+export interface GatewayPostInitArgs {
   /** SSH connection args for remote commands */
   connection: pulumi.Input<command.types.input.remote.ConnectionArgs>;
   /** Unique name for this gateway instance */
   profile: string;
-  /** Docker image tag for the gateway (from GatewayImage) */
-  imageName: pulumi.Input<string>;
-  /** Pre-start grouped shell commands: { groupName: [cmd, ...] }. One init container per group. */
-  preStartCommands?: Record<string, string[]>;
-  /** Individual secret env vars — each key is a separate Pulumi secret. All are available to all commands. */
+  /** Gateway container name (e.g. "openclaw-gateway-main") */
+  containerName: pulumi.Input<string>;
+  /** Gateway port for healthcheck */
+  port: number;
+  /** Post-start grouped shell commands: { groupName: [cmd, ...] } */
+  postStartCommands: Record<string, string[]>;
+  /** Individual secret env vars — all available to all commands */
   envVars?: Record<string, pulumi.Input<string>>;
   /** Gateway auth token */
   gatewayToken: pulumi.Input<string>;
-  /** Tailscale hostname (from TailscaleSidecar) — available as $TAILSCALE_SERVE_HOST in commands */
+  /** Tailscale hostname — available as $TAILSCALE_SERVE_HOST */
   tailscaleHostname: pulumi.Input<string>;
 }
 
@@ -40,60 +37,51 @@ function scanReferencedVars(cmdText: string, varNames: string[]): string[] {
   );
 }
 
-export class GatewayInit extends pulumi.ComponentResource {
-  /** Signals that all pre-start init steps have completed */
-  public readonly initComplete: pulumi.Output<string>;
-  /** Content hash of all init commands (for gateway container replacement) */
-  public readonly contentHash: string;
+export class GatewayPostInit extends pulumi.ComponentResource {
+  /** Signals that all post-start commands have completed */
+  public readonly postInitComplete: pulumi.Output<string>;
 
   constructor(
     name: string,
-    args: GatewayInitArgs,
+    args: GatewayPostInitArgs,
     opts?: pulumi.ComponentResourceOptions,
   ) {
-    super("openclaw:app:GatewayInit", name, {}, opts);
+    super("openclaw:app:GatewayPostInit", name, {}, opts);
 
-    const dDir = dataDir(args.profile);
     const envVars = args.envVars ?? {};
-    const groups = args.preStartCommands ?? {};
+    const groups = args.postStartCommands;
 
-    // All available env var names for reference scanning
     const allVarNames = [
       "OPENCLAW_GATEWAY_TOKEN",
       "TAILSCALE_SERVE_HOST",
       ...Object.keys(envVars),
     ];
 
-    // Full env var map: reserved vars + custom vars. All always available to all commands.
     const allEnvOutputs: Record<string, pulumi.Input<string>> = {
       OPENCLAW_GATEWAY_TOKEN: args.gatewayToken,
       TAILSCALE_SERVE_HOST: args.tailscaleHostname,
       ...envVars,
     };
 
-    // Step 1: Create host directories for bind-mounted persistent data
-    const createDirs = new command.remote.Command(
-      `${name}-dirs`,
+    // Wait for the gateway to be healthy before running post-start commands
+    const healthWait = new command.remote.Command(
+      `${name}-health-wait`,
       {
         connection: args.connection,
-        create: `mkdir -p ${dDir}/{config,workspace,config/identity,config/agents/main/agent,config/agents/main/sessions} && chown -R 1000:1000 ${dDir}/config ${dDir}/workspace`,
-        delete: `rm -rf ${dDir}`,
+        create: pulumi.interpolate`timeout 30 sh -c 'until docker exec ${args.containerName} wget -q --spider http://127.0.0.1:${args.port}/healthz 2>/dev/null; do sleep 2; done'`,
+        triggers: [Date.now().toString()],
       },
       { parent: this },
     );
 
-    // Content hash covers all command text across all groups (for gateway container replacement)
-    const allCmds = Object.values(groups).flat();
-    this.contentHash = hashCommands(allCmds);
-
-    // Step 2: Create one resource per group
+    // Create one resource per group, executed via docker exec
     const groupResources: command.remote.Command[] = [];
 
     for (const [groupName, cmds] of Object.entries(groups)) {
       const validCmds = cmds.filter((cmd) => {
         if (!cmd.trim()) {
           pulumi.log.warn(
-            `Skipping empty command in group "${groupName}" for gateway ${args.profile}`,
+            `Skipping empty post-start command in group "${groupName}" for gateway ${args.profile}`,
             this,
           );
           return false;
@@ -106,18 +94,17 @@ export class GatewayInit extends pulumi.ComponentResource {
       const script = validCmds
         .map(
           (cmd, i) =>
-            `echo "[init:${groupName} ${i + 1}/${validCmds.length}] ${cmd.replace(/"/g, '\\"')}" && ${cmd}`,
+            `echo "[post:${groupName} ${i + 1}/${validCmds.length}] ${cmd.replace(/"/g, '\\"')}" && ${cmd}`,
         )
         .join("\n");
       const encoded = Buffer.from(script).toString("base64");
       const groupHash = hashCommands(validCmds);
 
-      // Scan which env vars this group's commands reference.
-      // All vars are in the environment; scanning controls triggers only.
+      // Scan which env vars this group references (triggers only)
       const groupCmdText = validCmds.join("\n");
       const referencedVars = scanReferencedVars(groupCmdText, allVarNames);
 
-      // Build environment (all vars) and triggers (only referenced vars + group hash)
+      // Environment: all vars available
       const environment = pulumi
         .all(
           Object.fromEntries(
@@ -129,6 +116,7 @@ export class GatewayInit extends pulumi.ComponentResource {
         )
         .apply((env) => env as Record<string, string>);
 
+      // Triggers: group hash + referenced env vars only
       const triggerInputs: pulumi.Input<string>[] = [groupHash];
       for (const varName of referencedVars) {
         if (allEnvOutputs[varName]) {
@@ -137,16 +125,15 @@ export class GatewayInit extends pulumi.ComponentResource {
       }
       const triggers = pulumi.all(triggerInputs);
 
-      // Build the create command (no secret values — safe to log)
+      // docker exec with env vars piped as a script
       const create = pulumi
-        .all([pulumi.output(args.imageName), environment] as const)
-        .apply(([imageName, env]) => {
-          const envFlags = Object.keys(env)
-            .map((k) => `-e ${k}`)
-            .join(" ");
-          const envFlagsStr = envFlags ? ` ${envFlags}` : "";
+        .all([args.containerName, environment] as const)
+        .apply(([containerName, env]) => {
+          const envExports = Object.keys(env)
+            .map((k) => `export ${k}="$${k}"`)
+            .join("; ");
 
-          return `docker run --rm --network none --user node --entrypoint /bin/sh${envFlagsStr} -v openclaw-home-${args.profile}:/home/node -v ${dDir}/config:${DEFAULT_OPENCLAW_CONFIG_DIR} -v ${dDir}/workspace:${DEFAULT_OPENCLAW_WORKSPACE_DIR} ${imageName} -c "set -e; echo '${encoded}' | base64 -d | sh -e"`;
+          return `docker exec ${containerName} sh -c '${envExports}; set -e; echo '"'"'${encoded}'"'"' | base64 -d | sh -e'`;
         });
 
       const groupResource = new command.remote.Command(
@@ -161,7 +148,7 @@ export class GatewayInit extends pulumi.ComponentResource {
           parent: this,
           dependsOn: [
             groupResources.length === 0
-              ? createDirs
+              ? healthWait
               : groupResources[groupResources.length - 1],
           ],
           additionalSecretOutputs: ["stdout", "stderr", "environment"],
@@ -173,13 +160,12 @@ export class GatewayInit extends pulumi.ComponentResource {
     const lastResource =
       groupResources.length > 0
         ? groupResources[groupResources.length - 1]
-        : createDirs;
+        : healthWait;
 
-    this.initComplete = lastResource.stdout;
+    this.postInitComplete = lastResource.stdout;
 
     this.registerOutputs({
-      initComplete: this.initComplete,
-      contentHash: this.contentHash,
+      postInitComplete: this.postInitComplete,
     });
   }
 }

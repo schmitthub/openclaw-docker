@@ -31,7 +31,8 @@ export interface GatewayConfig {
   port: number; // gateway port inside container
   installBrowser?: boolean; // bake Playwright + Chromium (~300MB)
   imageSteps?: ImageStep[]; // custom Dockerfile RUN instructions
-  setupCommands?: string[]; // openclaw subcommands run in init container (e.g. 'onboard ...')
+  preStartCommands?: Record<string, string[]>; // pre-start grouped shell commands: { groupName: [cmd, ...] }
+  postStartCommands?: Record<string, string[]>; // post-start grouped shell commands (docker exec after gateway healthy)
   env?: Record<string, string>; // additional env vars for container
 }
 
