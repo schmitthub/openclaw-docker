@@ -155,14 +155,14 @@ export class GatewayImage extends pulumi.ComponentResource {
       },
     ];
 
-    // Ensure the named builder exists. Idempotent — skips if already created.
-    // This gives deterministic container/volume names so the provider reuses
-    // the same buildkit container and cache across deploys.
+    // Ensure the named builder exists and is running. --bootstrap starts the
+    // buildkit container if stopped (e.g. after buildkit-cleanup from a prior deploy).
+    // Without it, `inspect` succeeds on a stopped builder but the provider gets EOF.
     const ensureBuilder = new command.local.Command(
       `${name}-ensure-builder`,
       {
         create:
-          "docker buildx inspect openclaw-builder >/dev/null 2>&1 || docker buildx create --name openclaw-builder --driver docker-container",
+          "docker buildx inspect openclaw-builder --bootstrap >/dev/null 2>&1 || docker buildx create --name openclaw-builder --driver docker-container --bootstrap",
       },
       { parent: this },
     );
@@ -380,13 +380,14 @@ export class GatewayImage extends pulumi.ComponentResource {
       { parent: this },
     );
 
-    // Ensure the named builder exists on the VPS
+    // Ensure the named builder exists and is running on the VPS.
+    // --bootstrap starts the buildkit container if stopped (e.g. after buildkit-cleanup).
     const ensureBuilder = new command.remote.Command(
       `${name}-ensure-builder`,
       {
         connection: args.connection,
         create:
-          "docker buildx inspect openclaw-builder >/dev/null 2>&1 || docker buildx create --name openclaw-builder --driver docker-container",
+          "docker buildx inspect openclaw-builder --bootstrap >/dev/null 2>&1 || docker buildx create --name openclaw-builder --driver docker-container --bootstrap",
       },
       { parent: this },
     );
