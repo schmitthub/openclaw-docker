@@ -158,8 +158,9 @@ RUN SHARP_IGNORE_GLOBAL_LIBVIPS=1 NODE_OPTIONS=--max-old-space-size=2048 \\
 # loop so the CLI can't respond to the WS challenge before the 3s timeout expires.
 #
 # Bun's JavaScriptCore engine parses the same bundles in ~150ms, avoiding the issue.
-# The gateway process itself still runs on Node (via entrypoint CMD) — only CLI
-# invocations (probe, config, cron, devices, etc.) use Bun.
+# Both the gateway server and CLI invocations run through this Bun wrapper (the
+# Dockerfile CMD resolves to /usr/local/bin/openclaw, which execs bun). This is
+# acceptable — Bun's Node.js compatibility covers OpenClaw's runtime needs.
 #
 # Upstream refs:
 #   https://github.com/openclaw/openclaw/issues/45560

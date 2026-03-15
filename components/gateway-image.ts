@@ -168,8 +168,8 @@ export class GatewayImage extends pulumi.ComponentResource {
     );
 
     // The resource that downstream depends on — either a single Image or an Index.
-    // imageDigestTrigger is the registry manifest digest — changes on every push,
-    // used to force RemoteImage replacement (triggers, not pullTriggers).
+    // imageDigestTrigger is the build output digest — changes on every rebuild,
+    // used alongside the registry manifest digest in RemoteImage pullTriggers.
     let image: pulumi.Resource;
     let imageDigestTrigger: pulumi.Output<string>;
 
